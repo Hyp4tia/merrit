@@ -49,7 +49,8 @@ export const config = {
   linkedin: {
     clientId: process.env.LINKEDIN_CLIENT_ID ?? "",
     clientSecret: process.env.LINKEDIN_CLIENT_SECRET ?? "",
-    redirectUri: process.env.LINKEDIN_REDIRECT_URI ?? `http://127.0.0.1:${Number(process.env.OPERATOR_PORT ?? 3300)}/oauth/linkedin/callback`,
+    // LinkedIn accepts an http redirect only on localhost, not on 127.0.0.1.
+    redirectUri: process.env.LINKEDIN_REDIRECT_URI ?? `http://localhost:${Number(process.env.OPERATOR_PORT ?? 3300)}/oauth/linkedin/callback`,
     // LinkedIn retires API versions about a year after release. Override if the call 426s.
     version: process.env.LINKEDIN_VERSION ?? "202601",
   },

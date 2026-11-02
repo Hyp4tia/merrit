@@ -94,7 +94,7 @@ MERRIT_LLM_API_KEY=<openai-compatible key>
 MERRIT_LLM_MAX_TOKENS=2600
 LINKEDIN_CLIENT_ID=
 LINKEDIN_CLIENT_SECRET=
-LINKEDIN_REDIRECT_URI=http://127.0.0.1:3300/oauth/linkedin/callback
+LINKEDIN_REDIRECT_URI=http://localhost:3300/oauth/linkedin/callback
 LINKEDIN_VERSION=202601
 ```
 
@@ -158,7 +158,7 @@ no unofficial endpoints.
 
 1. Create an app at https://www.linkedin.com/developers/apps
 2. Add products: **Share on LinkedIn** and **Sign In with LinkedIn using OpenID Connect**
-3. Auth tab, authorized redirect URL: `http://127.0.0.1:3300/oauth/linkedin/callback`
+3. Auth tab, authorized redirect URL: `http://localhost:3300/oauth/linkedin/callback`
 4. Scopes granted: `openid`, `profile`, `w_member_social`
 5. Put the client id and secret in `.env`, then press **Authorize LinkedIn** in the queue UI
 6. `openid profile` identifies the member, `w_member_social` posts as that member
