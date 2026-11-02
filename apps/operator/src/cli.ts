@@ -36,6 +36,7 @@ function usage(): void {
 
   generate [--count N]           draft posts into the approval queue
   list [--status pending]        show the queue
+  brand                          what the brand file actually loaded
   show <id>                      full text of one draft
   approve <id>                   approve for publishing
   reject <id> --reason "..."     reject and redraft with that reason
@@ -93,6 +94,16 @@ try {
         if (item.published_url) console.log(`          ${item.published_url}`);
       }
       console.log(`[merrit] ${items.length} item(s)`);
+      break;
+    }
+    case "brand": {
+      const brandFile = brand();
+      console.log(`file: ${config.brandFile}`);
+      console.log(`client: ${brandFile.name} (${brandFile.slug})`);
+      console.log(`offers lines: ${brandFile.offers.length}`);
+      console.log(`commitments parsed: ${brandFile.commitments.length}`);
+      for (const promise of brandFile.commitments) console.log(`  - ${promise}`);
+      console.log(`banned phrases: ${brandFile.banned.length}`);
       break;
     }
     case "show": {

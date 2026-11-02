@@ -216,6 +216,23 @@ post urn comes back in the `x-restli-id` response header and is stored as the li
 Company page publishing is not wired. It needs `w_organization_social` with Community
 Management API approval, which is a partner review, not a self-serve product.
 
+### Verified live post
+
+2026-11-02, item `82ffa402` went through this exact path to Zeyad's personal profile:
+
+- `POST https://api.linkedin.com/rest/posts` with `LinkedIn-Version: 202601`, accepted, no 426
+- created URN returned in `x-restli-id`: `urn:li:share:7523062737069998080`
+- feed URL answers HTTP 200 to a fetch, with the post body present in the HTML and the first line
+  as `og:title`
+- token grants `openid,profile,w_member_social`, member `urn:li:person:KhbMnlToOL`, expires
+  2027-01-01
+
+https://www.linkedin.com/feed/update/urn:li:share:7523062737069998080/
+
+`GET /rest/posts/{urn}` is not a usable existence check: LinkedIn answers
+`400 ILLEGAL_ARGUMENT, Syntax exception in path variables` regardless of API version, so the
+create response header is the authoritative record.
+
 ---
 
 ## Publish kit
