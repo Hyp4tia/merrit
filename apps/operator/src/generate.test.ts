@@ -20,7 +20,11 @@ vi.mock("./llm.ts", () => ({
 const { BrandReviewRequired, generateDraft } = await import("./generate.ts");
 
 const brand = testBrand();
-const angle = { key: "engagement-and-price", brief: "Lay out how an engagement works and what it costs.", language: "en" as const };
+const angle = {
+  key: "engagement-and-price",
+  brief: "Lay out how an engagement works and what it costs.",
+  language: "en" as const,
+};
 
 const CLEAN =
   "A booking flow that confirms on the phone and then drops the record is worse than no booking flow. " +
@@ -48,7 +52,10 @@ describe("commercial guard in the generation pipeline", () => {
   });
 
   it("regenerates once when the first draft invents commercial terms, then accepts", async () => {
-    replies.push(`${CLEAN} ${INVENTED}`, `${CLEAN} Site plus marketing is 12,000 EGP, half at signing and half at launch.`);
+    replies.push(
+      `${CLEAN} ${INVENTED}`,
+      `${CLEAN} Site plus marketing is 12,000 EGP, half at signing and half at launch.`,
+    );
     const draft = await generateDraft(brand, angle);
     expect(draft.body).toContain("12,000 EGP");
     expect(calls).toHaveLength(2);

@@ -170,6 +170,13 @@ claim and passes. Anything that does not trace back to the offers block becomes 
 named reason: `commercial-amount`, `commercial-percentage`, `commercial-duration` or
 `commercial-structure`.
 
+Commitments are facts from the same file. Kōt's `commitments.promises` list is empty, so the
+agent may not promise a response time, turnaround, availability, support window or guarantee of
+any kind. Put a promise in that list and the guard accepts that exact figure while still rejecting
+any other: with "answer within 24 hours" listed, "within 24 hours" passes and "within 48 hours"
+still fails. The guard reads the brand file, it does not hardcode phrases, and the prompt tells
+the model the same thing.
+
 Flow: draft, brand rules, commercial guard, one regeneration told exactly what it invented, then
 the item is still queued but with `review_reason` set and a visible flag in the UI. A human
 decides. Invented terms cannot reach a published post without someone overriding a flag they can
@@ -181,10 +188,11 @@ see.
 pnpm vitest run apps/operator
 ```
 
-30 tests covering the incident copy verbatim (paid scoping week, fixed price for fixed scope,
+34 tests covering the incident copy verbatim (paid scoping week, fixed price for fixed scope,
 milestone balance, hourly rate, package tier), invented amount, percentage and duration, the real
-pricing post passing unchanged, Arabic digits, the regenerate-once-then-flag flow, and the em dash,
-exclamation mark and emoji rules that must not regress. The generation tests replace only the
+pricing post passing unchanged, Arabic digits, the regenerate-once-then-flag flow, commitments
+being read from the brand file rather than hardcoded, and the em dash, exclamation mark and emoji
+rules that must not regress. The generation tests replace only the
 model call, so the brand rules and the guard run for real.
 
 ---

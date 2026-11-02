@@ -70,8 +70,18 @@ offers:
     - never free work, in any form
     - nothing starts before the deposit clears
     - build floor is 12000
+commitments:
+  promises: []
 `;
 
-export function testBrand(): Brand {
-  return brandFromYaml(FIXTURE, "kot");
+// Pass promises to exercise the commitments path. An empty list is the real client's current
+// state: nothing may be promised.
+export function testBrand(promises: string[] = []): Brand {
+  const yaml = promises.length
+    ? FIXTURE.replace(
+        "  promises: []",
+        `  promises:\n${promises.map((promise) => `    - ${JSON.stringify(promise)}`).join("\n")}`,
+      )
+    : FIXTURE;
+  return brandFromYaml(yaml, "kot");
 }

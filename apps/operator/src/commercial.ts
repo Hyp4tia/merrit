@@ -63,7 +63,9 @@ const STRUCTURE_TERMS: string[] = [
 ];
 
 export function extractCommercialFacts(brand: Brand): CommercialFacts {
-  const text = brand.offers.join("\n").toLowerCase();
+  // Written commitments count as facts too: a promise in the brand file is allowed, an
+  // inferred one is not. With an empty list nothing about timing or support may be generated.
+  const text = [...brand.offers, ...brand.commitments].join("\n").toLowerCase();
   const amounts = new Set<string>();
   for (const match of text.matchAll(NUMBER)) {
     amounts.add(normalizeAmount(match[1] ?? match[0]));

@@ -122,6 +122,38 @@ describe("copy that must keep passing", () => {
   });
 });
 
+describe("commitments come from the brand file, not from the guard", () => {
+  const promise = "Every message gets an answer within 24 hours from the person doing the work.";
+  const draft =
+    "Every message gets an answer within 24 hours from the person doing the work. That is the whole support model.";
+
+  it("rejects the promise while the brand file promises nothing", () => {
+    const withoutPromises = extractCommercialFacts(testBrand());
+    expect(withoutPromises.amounts.has("24")).toBe(false);
+    expect(
+      checkCommercialTerms(draft, withoutPromises).map((violation) => violation.rule),
+    ).toContain("commercial-duration");
+  });
+
+  it("accepts the same draft verbatim once the brand file lists that promise", () => {
+    const withPromise = extractCommercialFacts(testBrand([promise]));
+    expect(checkCommercialTerms(draft, withPromise)).toEqual([]);
+  });
+
+  it("still rejects a figure the listed promise does not cover", () => {
+    const withPromise = extractCommercialFacts(testBrand([promise]));
+    const longer = "Every message gets an answer within 48 hours from the person doing the work.";
+    expect(checkCommercialTerms(longer, withPromise).map((violation) => violation.rule)).toContain(
+      "commercial-duration",
+    );
+  });
+
+  it("empties the commitment set when the brand file lists none", () => {
+    expect(testBrand().commitments).toEqual([]);
+    expect(testBrand([promise]).commitments).toEqual([promise]);
+  });
+});
+
 describe("normalisation", () => {
   it("treats separator styles as the same figure", () => {
     expect(normalizeAmount("12,000")).toBe("12000");

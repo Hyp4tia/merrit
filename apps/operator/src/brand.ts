@@ -27,6 +27,8 @@ export interface Brand {
   proofNever: string[];
   cta: string;
   offers: string[];
+  /** Promises Kōt makes in writing. Empty means it may promise no response time or guarantee. */
+  commitments: string[];
   cadence: string;
 }
 
@@ -98,6 +100,7 @@ export function brandFromYaml(raw: string, slug: string): Brand {
     proofNever: asList(parsed.proof?.never),
     cta: parsed.cta?.primary ?? "book a call",
     offers: offerLines(parsed.offers ?? {}),
+    commitments: asList(parsed.commitments?.promises),
     cadence: parsed.cadence?.linkedin_personal
       ? `${parsed.cadence.linkedin_personal} per week`
       : "",

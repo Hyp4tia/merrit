@@ -85,6 +85,15 @@ function systemPrompt(brand: Brand): string {
     "that are not on this list, and do not imply one exists.",
     ...brand.offers.map((offer) => `- ${offer}`),
     "",
+    ...(brand.commitments.length
+      ? [
+          "COMMITMENTS. Quote these verbatim if you need one, and no other promise of any kind:",
+          ...brand.commitments.map((promise) => `- ${promise}`),
+        ]
+      : [
+          "COMMITMENTS. None. Do not promise a response time, turnaround, availability, support window or guarantee of any kind.",
+        ]),
+    "",
     "STYLE ANCHORS. Match the register of the good examples, never the bad ones.",
     ...brand.voice.goodExamples.map((example) => `good: ${example}`),
     ...brand.voice.badExamples.map((example) => `bad: ${example}`),
