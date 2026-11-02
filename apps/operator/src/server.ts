@@ -17,12 +17,12 @@ import {
   rejectAndRegenerate,
   schedule,
 } from "./actions.ts";
-import { chatHistory, sendChatMessage } from "./chat.ts";
 import { findClient } from "./clients.ts";
 import { config } from "./config.ts";
 import type { ItemFilters, ItemStatus } from "./db.ts";
 import { initSchema } from "./db.ts";
 import { authorizeUrl, exchangeCode, isConfigured } from "./publish-linkedin.ts";
+import { delegate, listThreadSummaries, postToBot, threadView } from "./threads.ts";
 
 const STATUS_ORDER = [
   "pending",
@@ -274,31 +274,47 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    if (url.pathname === "/api/chat") {
-      const client = url.searchParams.get("client") ?? "";
-      const bot = url.searchParams.get("bot") ?? "";
-      if (req.method === "GET") {
-        if (!client || !bot) throw new Error("chat needs a client and a bot");
-        json(res, 200, { ok: true, messages: await chatHistory(client, bot) });
+    if (url.pathname === "/api/threads") {
+      const clientSlug = url.searchParams.get("client") ?? "";
+      if (req.method !== "GET") throw new Error("Use /api/threads/:bot for messages");
+      const clientEntry = findClient(clientsRegistry(), clientSlug);
+      json(res, 200, { ok: true, threads: await listThreadSummaries(clientEntry) });
+      return;
+    }
+
+    const threadRoute = /^\/api\/threads\/([a-z0-9-]+)(\/messages)?$/.exec(url.pathname);
+    if (threadRoute?.[1]) {
+      const botId = threadRoute[1];
+      const isMessages = Boolean(threadRoute[2]);
+      // The body is read once: readJson drains the stream, so a second read would come back empty.
+      const body = isMessages && req.method === "POST" ? await readJson(req) : {};
+      const clientSlug = isMessages
+        ? String(body.client ?? "")
+        : (url.searchParams.get("client") ?? "");
+      const clientEntry = findClient(clientsRegistry(), clientSlug);
+
+      if (!isMessages && req.method === "GET") {
+        json(res, 200, { ok: true, ...(await threadView(clientEntry, botId)) });
         return;
       }
-      if (req.method === "POST") {
-        const body = await readJson(req);
-        const clientSlug = String(body.client ?? "");
-        const botId = String(body.bot ?? "");
-        const registry = findClient(clientsRegistry(), clientSlug);
-        const bot = registry.bots.find((entry) => entry.id === botId);
-        if (!bot) throw new Error(`Unknown bot "${botId}" for ${clientSlug}`);
-        const result = await sendChatMessage({
-          client: clientSlug,
-          bot: botId,
-          botName: bot.name,
-          account: body.account ? String(body.account) : null,
-          message: String(body.message ?? ""),
-        });
+      if (isMessages && req.method === "POST") {
+        const result = await postToBot(clientEntry, botId, String(body.content ?? ""));
         json(res, 200, { ok: true, ...result });
         return;
       }
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/delegate") {
+      const body = await readJson(req);
+      const clientEntry = findClient(clientsRegistry(), String(body.client ?? ""));
+      const result = await delegate({
+        client: clientEntry,
+        fromBotId: String(body.from ?? ""),
+        toBotId: String(body.to ?? ""),
+        request: String(body.request ?? ""),
+      });
+      json(res, 200, { ok: true, ...result });
+      return;
     }
 
     if (req.method === "POST" && url.pathname === "/api/check") {

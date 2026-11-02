@@ -18,9 +18,14 @@ export interface Account {
   note: string;
 }
 
+export type BotRole = "lead" | "copywriter" | "strategist" | "designer" | "analyst" | "ads";
+
 export interface Bot {
   id: string;
   name: string;
+  role: string;
+  /** Declared bots that are not active are refused by name, never silently routed. */
+  active: boolean;
   description: string;
 }
 
@@ -64,6 +69,8 @@ function botsOf(entry: Record<string, unknown>): Bot[] {
     return {
       id: String(record.id ?? ""),
       name: String(record.name ?? record.id ?? ""),
+      role: String(record.role ?? ""),
+      active: record.active === true,
       description: String(record.description ?? ""),
     };
   });
@@ -128,6 +135,24 @@ export function authorUrnFor(
 ): string {
   if (tokenUrn) return tokenUrn;
   return account.member_urn || "unresolved";
+}
+
+export function findBot(client: ClientEntry, botId: string): Bot {
+  const bot = client.bots.find((entry) => entry.id === botId);
+  if (!bot) {
+    throw new Error(
+      `Unknown bot "${botId}" for ${client.slug}. Declared: ${client.bots.map((entry) => entry.id).join(", ") || "none"}`,
+    );
+  }
+  return bot;
+}
+
+/** The bot a delegation should go to, matched by role first, then id. */
+export function findBotByRole(client: ClientEntry, role: string): Bot | undefined {
+  return (
+    client.bots.find((entry) => entry.role === role) ??
+    client.bots.find((entry) => entry.id === role)
+  );
 }
 
 export function clientBrand(client: ClientEntry): Brand {

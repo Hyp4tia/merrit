@@ -18,15 +18,17 @@ const api = vi.hoisted(() => ({
   dryRun: vi.fn(),
   check: vi.fn(),
   generate: vi.fn(),
-  chat: vi.fn(),
-  sendChat: vi.fn(),
+  threads: vi.fn(),
+  thread: vi.fn(),
+  postMessage: vi.fn(),
 }));
 
 vi.mock("./api", () => ({
   merritApi: api,
   merritKeys: {
     clients: ["merrit", "clients"],
-    chat: (client: string, bot: string) => ["merrit", "chat", client, bot],
+    threads: (client: string) => ["merrit", "threads", client],
+    thread: (client: string, botId: string) => ["merrit", "thread", client, botId],
     items: (filters: unknown) => ["merrit", "items", filters],
     item: (id: string | null) => ["merrit", "item", id],
     check: (client: string, language: string, body: string) => [
@@ -99,9 +101,25 @@ const client = {
   accounts: [PERSON, PAGE],
   bots: [
     {
-      id: "kot-writer",
-      name: "Kōt writer",
-      description: "Drafts posts from the brand file and holds them in the approval queue.",
+      id: "kot-lead",
+      name: "Kōt lead",
+      role: "lead",
+      active: true,
+      description: "Routes the request and reports the outcome. Never writes the post.",
+    },
+    {
+      id: "kot-copywriter",
+      name: "Kōt copywriter",
+      role: "copywriter",
+      active: true,
+      description: "Drafts and revises posts from the brand file.",
+    },
+    {
+      id: "kot-strategist",
+      name: "Kōt strategist",
+      role: "strategist",
+      active: false,
+      description: "Ideas, angles and calendar. Not active in this build.",
     },
   ],
 };
@@ -186,15 +204,37 @@ beforeEach(() => {
     events: [{ id: 1, action: "created", detail: "angle", at: new Date().toISOString() }],
   });
   api.check.mockResolvedValue({ brandViolations: [], commercialViolations: [] });
-  api.chat.mockResolvedValue([]);
+  api.threads.mockResolvedValue(
+    client.bots.map((bot) => ({
+      threadId: bot.active ? `thread-${bot.id}` : null,
+      bot,
+      messageCount: 0,
+      lastMessageAt: null,
+    })),
+  );
+  api.thread.mockImplementation((_: string, botId: string) =>
+    Promise.resolve({
+      threadId: `thread-${botId}`,
+      bot: client.bots.find((entry) => entry.id === botId),
+      messages: [],
+      delegations: [],
+    }),
+  );
 });
 
 describe("Merrit home", () => {
   it("is a chat: bot roster on the left, conversation in the centre", async () => {
     const container = await renderPage();
-    expect(container.textContent).toContain("Kōt writer");
-    expect(container.textContent).toContain("Drafts posts from the brand file");
-    expect(container.textContent).toContain("Ask for drafts, or ask what the brand file allows");
+    expect(container.textContent).toContain("Kōt lead");
+    expect(container.textContent).toContain("Routes the request and reports the outcome");
+    expect(container.textContent).toContain("Kōt copywriter");
+    // Declared but not built: listed, disabled, and labelled, never hidden or silently routable.
+    expect(container.textContent).toContain("Kōt strategist");
+    expect(container.textContent).toContain("inactive");
+    const strategist = Array.from(container.querySelectorAll("button")).find((button) =>
+      (button.textContent ?? "").includes("Kōt strategist"),
+    );
+    expect(strategist?.disabled).toBe(true);
     expect(container.textContent).toContain("Review queue");
     expect(container.querySelector('textarea[aria-label="Message the bot"]')).not.toBeNull();
   });
@@ -225,13 +265,11 @@ describe("Merrit home", () => {
   });
 
   it("sends a message to the bot for the selected account", async () => {
-    api.sendChat.mockResolvedValue({
-      action: "draft",
-      reply: "Queued 2 drafts for review.",
-      created: 2,
-      flagged: 0,
-      failures: [],
+    api.postMessage.mockResolvedValue({
+      reply: "Sent that to the copywriter.",
       messages: [],
+      delegation: null,
+      itemId: null,
     });
     const container = await renderPage();
 
@@ -255,12 +293,72 @@ describe("Merrit home", () => {
     });
     await flush();
 
-    expect(api.sendChat).toHaveBeenCalledWith({
-      client: "kot",
-      bot: "kot-writer",
-      account: "kot-page",
-      message: "Draft two posts about the page",
+    expect(api.postMessage).toHaveBeenCalledWith(
+      "kot",
+      "kot-lead",
+      "Draft two posts about the page",
+    );
+  });
+
+  it("shows the delegation in both threads and moves between them", async () => {
+    const delegation = {
+      id: "delegation-1",
+      fromBot: "kot-lead",
+      toBot: "kot-copywriter",
+      request: "Draft a post that answers the cheap-site objection",
+      itemId: ITEM_ID,
+      status: "done",
+      at: new Date().toISOString(),
+    };
+    api.thread.mockImplementation((_: string, botId: string) =>
+      Promise.resolve({
+        threadId: `thread-${botId}`,
+        bot: client.bots.find((entry) => entry.id === botId),
+        messages: [
+          {
+            id: 1,
+            role: "user" as const,
+            bot: botId,
+            content: "Draft a post that answers the cheap-site objection",
+            itemId: null,
+            delegationId: null,
+            at: new Date().toISOString(),
+          },
+          {
+            id: 2,
+            role: "assistant" as const,
+            bot: botId,
+            content:
+              botId === "kot-lead"
+                ? "Sent that to the copywriter. The draft is in the queue as one item."
+                : "The counter at a clinic fills with small promises.",
+            itemId: ITEM_ID,
+            delegationId: delegation.id,
+            at: new Date().toISOString(),
+          },
+        ],
+        delegations: [delegation],
+      }),
+    );
+
+    const container = await renderPage();
+    await flush();
+
+    // Lead thread: the card is there, with the item and the other bot named.
+    expect(container.textContent).toContain("Delegation · Kōt lead to Kōt copywriter");
+    expect(container.textContent).toContain("item 11111111");
+
+    await act(async () => {
+      buttonByText(container, "Open Kōt copywriter").dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
     });
+    await flush();
+
+    // Copywriter thread: same delegation row, same item, and the draft itself.
+    expect(api.thread).toHaveBeenCalledWith("kot", "kot-copywriter");
+    expect(container.textContent).toContain("Delegation · Kōt lead to Kōt copywriter");
+    expect(container.textContent).toContain("The counter at a clinic fills with small promises.");
   });
 
   it("offers no publish control anywhere", async () => {

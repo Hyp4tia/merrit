@@ -68,8 +68,67 @@ try {
     .catch(() => "");
   console.log(`disconnected banner: ${banner.replace(/\s+/g, " ").slice(0, 140)}`);
 
-  // 3. Back to Personal, then into the queue from the sidebar.
+  // 3. The delegation loop, driven through the real UI. The lead routes, the copywriter drafts,
+  // and a reply from the owner revises the same item instead of creating another.
   await accounts.selectOption("kot-personal");
+  await page.waitForTimeout(400);
+
+  const composer = chat().getByRole("textbox", { name: "Message the bot" });
+  const sendButton = chat().getByRole("button", { name: "Send" });
+
+  await composer.fill("Draft a post that answers the cheap-site objection.");
+  await sendButton.click();
+  await chat()
+    .getByText(/Delegation ·/)
+    .first()
+    .waitFor({ timeout: 60_000 });
+  await page.waitForTimeout(600);
+  const leadThread = await chat().innerText();
+  console.log(
+    `lead thread: ${leadThread.split("\n").filter(Boolean).slice(0, 9).join(" | ").slice(0, 400)}`,
+  );
+  const card = await chat()
+    .getByText(/Delegation ·/)
+    .first()
+    .innerText();
+  console.log(`card: ${card.replace(/\s+/g, " ").slice(0, 200)}`);
+  await shot("05-lead-delegation");
+
+  // 4. Click the card: the copywriter's thread holds the request and the draft.
+  await chat()
+    .getByRole("button", { name: /^Open / })
+    .first()
+    .click();
+  await chat()
+    .getByText(/Delegation ·/)
+    .first()
+    .waitFor({ timeout: 30_000 });
+  await page.waitForTimeout(600);
+  const copyThread = await chat().innerText();
+  console.log(`copywriter thread length: ${copyThread.length}`);
+  await shot("06-copywriter-draft");
+
+  // 5. Revise in the copywriter's thread: one item, edited in place.
+  await composer.fill("make it shorter");
+  await sendButton.click();
+  await chat()
+    .getByText(/Revised\. Still one item/)
+    .first()
+    .waitFor({ timeout: 60_000 });
+  await page.waitForTimeout(600);
+  const revised = await chat()
+    .getByText(/Revised\. Still one item/)
+    .first()
+    .innerText();
+  console.log(`revision: ${revised.replace(/\s+/g, " ").slice(0, 160)}`);
+  await shot("07-copywriter-revision");
+
+  // 6. Back to the queue to prove the item count moved by exactly one and the dry run still works.
+  await page
+    .getByRole("button", { name: /Kōt lead/ })
+    .first()
+    .click();
+  await page.waitForTimeout(300);
   await page.waitForTimeout(400);
   await page.getByRole("button", { name: "Review queue" }).click();
   await queue().waitFor({ timeout: 20_000 });

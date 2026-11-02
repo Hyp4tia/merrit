@@ -85,6 +85,41 @@ export async function initSchema(): Promise<void> {
       at timestamptz NOT NULL DEFAULT now()
     );
 
+    CREATE TABLE IF NOT EXISTS merrit_thread (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      client text NOT NULL,
+      bot text NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      UNIQUE (client, bot)
+    );
+
+    CREATE TABLE IF NOT EXISTS merrit_delegation (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      client text NOT NULL,
+      from_bot text NOT NULL,
+      to_bot text NOT NULL,
+      request text NOT NULL,
+      item_id uuid REFERENCES merrit_approval_item(id) ON DELETE SET NULL,
+      status text NOT NULL DEFAULT 'open' CHECK (status IN ('open','done','failed')),
+      idempotency_key text NOT NULL UNIQUE,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+
+    CREATE TABLE IF NOT EXISTS merrit_message (
+      id bigserial PRIMARY KEY,
+      thread_id uuid NOT NULL REFERENCES merrit_thread(id) ON DELETE CASCADE,
+      client text NOT NULL,
+      bot text NOT NULL,
+      role text NOT NULL CHECK (role IN ('user','assistant','delegation')),
+      content text NOT NULL,
+      item_id uuid REFERENCES merrit_approval_item(id) ON DELETE SET NULL,
+      delegation_id uuid REFERENCES merrit_delegation(id) ON DELETE SET NULL,
+      created_at timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS merrit_message_thread_idx ON merrit_message (thread_id, created_at);
+
     CREATE TABLE IF NOT EXISTS merrit_chat_message (
       id bigserial PRIMARY KEY,
       client text NOT NULL,
@@ -97,6 +132,20 @@ export async function initSchema(): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS merrit_chat_message_thread_idx
       ON merrit_chat_message (client, bot, created_at);
+
+    -- The old single-thread chat table carries real conversation history, so it is moved into
+    -- threads once rather than dropped. Idempotent: it only runs while merrit_message is empty.
+    INSERT INTO merrit_thread (client, bot)
+      SELECT DISTINCT client, bot FROM merrit_chat_message
+      ON CONFLICT (client, bot) DO NOTHING;
+
+    INSERT INTO merrit_message (thread_id, client, bot, role, content, created_at)
+      SELECT t.id, m.client, m.bot,
+             CASE WHEN m.role = 'user' THEN 'user' ELSE 'assistant' END,
+             m.body, m.created_at
+      FROM merrit_chat_message m
+      JOIN merrit_thread t ON t.client = m.client AND t.bot = m.bot
+      WHERE NOT EXISTS (SELECT 1 FROM merrit_message);
 
     CREATE TABLE IF NOT EXISTS merrit_linkedin_token (
       id integer PRIMARY KEY DEFAULT 1 CHECK (id = 1),
@@ -322,6 +371,155 @@ export async function addChatMessage(input: {
   const row = rows[0];
   if (!row) throw new Error("Insert into merrit_chat_message returned no row");
   return row;
+}
+
+export interface ThreadRow {
+  id: string;
+  client: string;
+  bot: string;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface MessageRow {
+  id: number;
+  thread_id: string;
+  client: string;
+  bot: string;
+  role: "user" | "assistant" | "delegation";
+  content: string;
+  item_id: string | null;
+  delegation_id: string | null;
+  created_at: Date;
+}
+
+export interface DelegationRow {
+  id: string;
+  client: string;
+  from_bot: string;
+  to_bot: string;
+  request: string;
+  item_id: string | null;
+  status: "open" | "done" | "failed";
+  idempotency_key: string;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export async function ensureThread(client: string, bot: string): Promise<ThreadRow> {
+  const { rows } = await pool.query<ThreadRow>(
+    `INSERT INTO merrit_thread (client, bot) VALUES ($1,$2)
+     ON CONFLICT (client, bot) DO UPDATE SET updated_at = merrit_thread.updated_at
+     RETURNING *`,
+    [client, bot],
+  );
+  const row = rows[0];
+  if (!row) throw new Error("ensureThread returned no row");
+  return row;
+}
+
+export async function getThread(client: string, threadId: string): Promise<ThreadRow | null> {
+  const { rows } = await pool.query<ThreadRow>(
+    "SELECT * FROM merrit_thread WHERE id = $1 AND client = $2",
+    [threadId, client],
+  );
+  return rows[0] ?? null;
+}
+
+export async function listThreads(client: string): Promise<ThreadRow[]> {
+  const { rows } = await pool.query<ThreadRow>(
+    "SELECT * FROM merrit_thread WHERE client = $1 ORDER BY updated_at DESC",
+    [client],
+  );
+  return rows;
+}
+
+export async function addMessage(input: {
+  threadId: string;
+  client: string;
+  bot: string;
+  role: "user" | "assistant" | "delegation";
+  content: string;
+  itemId?: string | null;
+  delegationId?: string | null;
+}): Promise<MessageRow> {
+  const { rows } = await pool.query<MessageRow>(
+    `INSERT INTO merrit_message (thread_id, client, bot, role, content, item_id, delegation_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+    [
+      input.threadId,
+      input.client,
+      input.bot,
+      input.role,
+      input.content,
+      input.itemId ?? null,
+      input.delegationId ?? null,
+    ],
+  );
+  const row = rows[0];
+  if (!row) throw new Error("Insert into merrit_message returned no row");
+  await pool.query("UPDATE merrit_thread SET updated_at = now() WHERE id = $1", [input.threadId]);
+  return row;
+}
+
+export async function listMessages(threadId: string, limit = 200): Promise<MessageRow[]> {
+  const { rows } = await pool.query<MessageRow>(
+    "SELECT * FROM merrit_message WHERE thread_id = $1 ORDER BY created_at ASC, id ASC LIMIT $2",
+    [threadId, limit],
+  );
+  return rows;
+}
+
+/**
+ * Idempotent by key: the same request from the same bot pair returns the existing delegation,
+ * item and all, instead of creating a second one.
+ */
+export async function upsertDelegation(input: {
+  client: string;
+  fromBot: string;
+  toBot: string;
+  request: string;
+  idempotencyKey: string;
+}): Promise<{ delegation: DelegationRow; created: boolean }> {
+  const inserted = await pool.query<DelegationRow>(
+    `INSERT INTO merrit_delegation (client, from_bot, to_bot, request, idempotency_key)
+     VALUES ($1,$2,$3,$4,$5)
+     ON CONFLICT (idempotency_key) DO NOTHING
+     RETURNING *`,
+    [input.client, input.fromBot, input.toBot, input.request, input.idempotencyKey],
+  );
+  if (inserted.rows[0]) return { delegation: inserted.rows[0], created: true };
+
+  const existing = await pool.query<DelegationRow>(
+    "SELECT * FROM merrit_delegation WHERE idempotency_key = $1",
+    [input.idempotencyKey],
+  );
+  const row = existing.rows[0];
+  if (!row) throw new Error("Delegation lookup failed after conflict");
+  return { delegation: row, created: false };
+}
+
+export async function linkDelegationItem(
+  delegationId: string,
+  itemId: string,
+): Promise<DelegationRow> {
+  const { rows } = await pool.query<DelegationRow>(
+    `UPDATE merrit_delegation
+     SET item_id = $2, status = 'done', updated_at = now()
+     WHERE id = $1 RETURNING *`,
+    [delegationId, itemId],
+  );
+  const row = rows[0];
+  if (!row) throw new Error(`No delegation ${delegationId}`);
+  return row;
+}
+
+export async function listDelegations(client: string): Promise<DelegationRow[]> {
+  const { rows } = await pool.query<DelegationRow>(
+    "SELECT * FROM merrit_delegation WHERE client = $1 ORDER BY created_at ASC",
+    [client],
+  );
+  return rows;
 }
 
 export async function getLinkedInToken(): Promise<LinkedInToken | null> {

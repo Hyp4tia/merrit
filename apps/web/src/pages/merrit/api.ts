@@ -56,7 +56,50 @@ export interface Account {
 export interface Bot {
   id: string;
   name: string;
+  role: string;
+  active: boolean;
   description: string;
+}
+
+export interface ThreadMessage {
+  id: number;
+  role: "user" | "assistant" | "delegation";
+  bot: string;
+  content: string;
+  itemId: string | null;
+  delegationId: string | null;
+  at: string;
+}
+
+export interface Delegation {
+  id: string;
+  fromBot: string;
+  toBot: string;
+  request: string;
+  itemId: string | null;
+  status: string;
+  at: string;
+}
+
+export interface ThreadView {
+  threadId: string;
+  bot: Bot;
+  messages: ThreadMessage[];
+  delegations: Delegation[];
+}
+
+export interface ThreadSummary {
+  threadId: string | null;
+  bot: Bot;
+  messageCount: number;
+  lastMessageAt: string | null;
+}
+
+export interface SentTurn {
+  reply: string;
+  messages: ThreadMessage[];
+  delegation: Delegation | null;
+  itemId: string | null;
 }
 
 export interface ClientSummary {
@@ -68,24 +111,6 @@ export interface ClientSummary {
   needsReview: number;
   accounts: Account[];
   bots: Bot[];
-}
-
-export interface ChatTurn {
-  id: number;
-  role: "user" | "assistant";
-  body: string;
-  action?: string;
-  created: number;
-  at: string;
-}
-
-export interface SendChatResult {
-  action: "draft" | "answer" | "clarify";
-  reply: string;
-  created: number;
-  flagged: number;
-  failures: Array<{ angle: string; error: string }>;
-  messages: ChatTurn[];
 }
 
 export interface Violation {
@@ -186,21 +211,23 @@ export const merritApi = {
     );
   },
 
-  async chat(client: string, bot: string): Promise<ChatTurn[]> {
-    const params = new URLSearchParams({ client, bot });
-    const { messages } = await request<{ messages: ChatTurn[] }>(`/chat?${params.toString()}`);
-    return messages;
+  async threads(client: string): Promise<ThreadSummary[]> {
+    const params = new URLSearchParams({ client });
+    const { threads } = await request<{ threads: ThreadSummary[] }>(
+      `/threads?${params.toString()}`,
+    );
+    return threads;
   },
 
-  sendChat(input: {
-    client: string;
-    bot: string;
-    account: string;
-    message: string;
-  }): Promise<SendChatResult> {
-    return request<SendChatResult>("/chat", {
+  thread(client: string, botId: string): Promise<ThreadView> {
+    const params = new URLSearchParams({ client });
+    return request<ThreadView>(`/threads/${botId}?${params.toString()}`);
+  },
+
+  postMessage(client: string, botId: string, content: string): Promise<SentTurn> {
+    return request<SentTurn>(`/threads/${botId}/messages`, {
       method: "POST",
-      body: JSON.stringify(input),
+      body: JSON.stringify({ client, content }),
     });
   },
 
@@ -222,7 +249,8 @@ export const merritApi = {
 
 export const merritKeys = {
   clients: ["merrit", "clients"] as const,
-  chat: (client: string, bot: string) => ["merrit", "chat", client, bot] as const,
+  threads: (client: string) => ["merrit", "threads", client] as const,
+  thread: (client: string, botId: string) => ["merrit", "thread", client, botId] as const,
   items: (filters: Filters) => ["merrit", "items", filters] as const,
   item: (id: string | null) => ["merrit", "item", id] as const,
   check: (client: string, language: Language, body: string) =>

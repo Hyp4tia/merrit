@@ -41,11 +41,19 @@ export function MerritPage() {
   const activeSlug = client?.slug ?? "";
   const accounts = client?.accounts ?? [];
   const account = accounts.find((entry) => entry.id === accountId) ?? accounts[0] ?? null;
-  const bot = client?.bots.find((entry) => entry.id === botId) ?? client?.bots[0] ?? null;
+  const activeBots = (client?.bots ?? []).filter((entry) => entry.active);
+  const bot = activeBots.find((entry) => entry.id === botId) ?? activeBots[0] ?? null;
+  const botName = (id: string) => client?.bots.find((entry) => entry.id === id)?.name ?? id;
 
-  const chat = useQuery({
-    queryKey: merritKeys.chat(activeSlug, bot?.id ?? ""),
-    queryFn: () => merritApi.chat(activeSlug, bot?.id ?? ""),
+  const threads = useQuery({
+    queryKey: merritKeys.threads(activeSlug),
+    queryFn: () => merritApi.threads(activeSlug),
+    enabled: Boolean(activeSlug),
+  });
+
+  const thread = useQuery({
+    queryKey: merritKeys.thread(activeSlug, bot?.id ?? ""),
+    queryFn: () => merritApi.thread(activeSlug, bot?.id ?? ""),
     enabled: Boolean(activeSlug && bot),
   });
 
@@ -64,13 +72,7 @@ export function MerritPage() {
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["merrit"] });
 
   const send = useMutation({
-    mutationFn: (message: string) =>
-      merritApi.sendChat({
-        client: activeSlug,
-        bot: bot?.id ?? "",
-        account: account?.id ?? "",
-        message,
-      }),
+    mutationFn: (message: string) => merritApi.postMessage(activeSlug, bot?.id ?? "", message),
     onSuccess: () => refresh(),
     onError: () => refresh(),
   });
@@ -139,7 +141,7 @@ export function MerritPage() {
       <div className="flex min-h-0 flex-1">
         <BotSidebar
           brandName={client?.name ?? "Merrit"}
-          bots={client?.bots ?? []}
+          threads={threads.data ?? []}
           activeBotId={bot?.id ?? null}
           onSelectBot={setBotId}
           view={view}
@@ -154,14 +156,21 @@ export function MerritPage() {
           </div>
         ) : view === "chat" ? (
           <ChatView
-            botName={bot?.name ?? "the bot"}
-            messages={chat.data ?? []}
-            loading={chat.isLoading}
+            bot={bot}
+            messages={thread.data?.messages ?? []}
+            delegations={thread.data?.delegations ?? []}
+            loading={thread.isLoading}
             sending={send.isPending}
             error={send.isError ? String(send.error) : null}
             accountLabel={account?.label ?? "No account"}
             accountConnected={Boolean(account?.connected)}
             onSend={(message) => send.mutate(message)}
+            botName={botName}
+            onOpenDelegation={(delegation) => {
+              const other = delegation.fromBot === bot?.id ? delegation.toBot : delegation.fromBot;
+              setBotId(other);
+              setView("chat");
+            }}
           />
         ) : (
           <>

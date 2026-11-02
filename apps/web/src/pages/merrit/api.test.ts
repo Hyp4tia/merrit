@@ -58,23 +58,20 @@ describe("merrit api client", () => {
     expect(JSON.parse(String(init.body))).toEqual({ account: "kot-page" });
   });
 
-  it("loads and posts chat through the operator", async () => {
-    const spy = stubFetch({ messages: [] });
-    await merritApi.chat("kot", "kot-writer");
-    expect(String(spy.mock.calls[0]?.[0])).toBe("/merrit-api/chat?client=kot&bot=kot-writer");
+  it("loads a thread and posts to the bot that owns it", async () => {
+    const spy = stubFetch({ messages: [], delegations: [] });
+    await merritApi.thread("kot", "kot-lead");
+    expect(String(spy.mock.calls[0]?.[0])).toBe("/merrit-api/threads/kot-lead?client=kot");
 
-    await merritApi.sendChat({
-      client: "kot",
-      bot: "kot-writer",
-      account: "kot-personal",
-      message: "hi",
-    });
-    const init = spy.mock.calls[1]?.[1] as RequestInit;
+    await merritApi.threads("kot");
+    expect(String(spy.mock.calls[1]?.[0])).toBe("/merrit-api/threads?client=kot");
+
+    await merritApi.postMessage("kot", "kot-lead", "Draft the cheap-site post");
+    expect(String(spy.mock.calls[2]?.[0])).toBe("/merrit-api/threads/kot-lead/messages");
+    const init = spy.mock.calls[2]?.[1] as RequestInit;
     expect(JSON.parse(String(init.body))).toEqual({
       client: "kot",
-      bot: "kot-writer",
-      account: "kot-personal",
-      message: "hi",
+      content: "Draft the cheap-site post",
     });
   });
 
