@@ -42,7 +42,7 @@ function usage(): void {
   show <id>                      full text of one draft
   approve <id>                   approve for publishing
   reject <id> --reason "..."     reject and redraft with that reason
-  publish <id> [--dry-run]       publish an approved draft, or rehearse without posting
+  publish <id> [--dry-run] [--account id]   publish an approved draft, or rehearse it
   kit <id>                       write the copy/download publish kit
   published <id> --url <url>     record a manual publish
   deleted <id> [--note "..."]    mark a published post as taken down
@@ -147,7 +147,10 @@ try {
     case "publish": {
       const id = positional(0);
       if (!id) throw new Error("publish needs an id");
-      const result = await publishApproved(id, { dryRun: rest.includes("--dry-run") });
+      const result = await publishApproved(id, {
+        dryRun: rest.includes("--dry-run"),
+        accountId: flag("account"),
+      });
       if (result.mode === "api") {
         console.log(`published ${result.url}`);
       } else if (result.mode === "dry-run") {

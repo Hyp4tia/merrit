@@ -12,6 +12,8 @@ interface DetailProps {
   events: ItemEvent[];
   loading: boolean;
   onChanged: () => void;
+  /** The account the dry run would post as. Undefined means nothing is connected. */
+  account: { id: string; label: string; connected: boolean; reason: string } | null;
 }
 
 function ViolationList({
@@ -49,7 +51,7 @@ function ViolationList({
 }
 
 /** Right panel: the draft, the guards, the two human decisions, and a dry run. */
-export function ItemDetail({ item, events, loading, onChanged }: DetailProps) {
+export function ItemDetail({ item, events, loading, onChanged, account }: DetailProps) {
   const [draft, setDraft] = useState(item?.body ?? "");
   const [reason, setReason] = useState("");
   const [payload, setPayload] = useState<DryRunPayload | null>(null);
@@ -132,7 +134,7 @@ export function ItemDetail({ item, events, loading, onChanged }: DetailProps) {
   });
 
   const dryRun = useMutation({
-    mutationFn: (id: string) => merritApi.dryRun(id),
+    mutationFn: (id: string) => merritApi.dryRun(id, account?.id ?? ""),
     onSuccess: (result) => {
       setPayload(result.payload);
       setNotice("Dry run complete. Nothing was sent to LinkedIn.");
@@ -280,11 +282,13 @@ export function ItemDetail({ item, events, loading, onChanged }: DetailProps) {
               size="sm"
               variant="secondary"
               className="w-full"
-              disabled={busy || !canDryRun(item.status)}
+              disabled={busy || !canDryRun(item.status) || !account?.connected}
               title={
-                canDryRun(item.status)
-                  ? "Show the exact payload without sending it"
-                  : "Approve the draft before rehearsing a publish"
+                !account?.connected
+                  ? (account?.reason ?? "No account is connected for this brand.")
+                  : canDryRun(item.status)
+                    ? "Show the exact payload without sending it"
+                    : "Approve the draft before rehearsing a publish"
               }
               onClick={() => dryRun.mutate(item.id)}
             >
@@ -292,8 +296,10 @@ export function ItemDetail({ item, events, loading, onChanged }: DetailProps) {
               Dry run, show payload
             </Button>
             <p className="text-xs text-faint-foreground">
-              Publishing is disabled in this build. A dry run writes the publish kit and records the
-              item as a rehearsal; it never contacts LinkedIn.
+              {account?.connected
+                ? `Publishing is disabled in this build. A dry run would post as ${account.label} and it never contacts LinkedIn.`
+                : (account?.reason ??
+                  "No account is connected for this brand, so no payload can be produced.")}
             </p>
           </div>
 
@@ -307,6 +313,12 @@ export function ItemDetail({ item, events, loading, onChanged }: DetailProps) {
                 <div className="flex gap-2">
                   <dt className="w-20 shrink-0">POST to</dt>
                   <dd className="break-all font-mono">{payload.wouldPostTo}</dd>
+                </div>
+                <div className="flex gap-2">
+                  <dt className="w-20 shrink-0">account</dt>
+                  <dd>
+                    {payload.accountLabel} ({payload.accountId})
+                  </dd>
                 </div>
                 <div className="flex gap-2">
                   <dt className="w-20 shrink-0">author</dt>

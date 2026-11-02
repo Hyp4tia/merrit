@@ -1,5 +1,5 @@
 import type { Language } from "./brand.ts";
-import type { ClientEntry } from "./clients.ts";
+import type { ClientEntry, ResolvedAccount } from "./clients.ts";
 import { clientBrand, findClient, loadClients } from "./clients.ts";
 import { checkCommercialTerms, extractCommercialFacts } from "./commercial.ts";
 import { config } from "./config.ts";
@@ -35,14 +35,54 @@ export interface ClientSummary extends ClientEntry {
   counts: Record<string, number>;
   /** Drafts waiting on a human. This is the number the left rail shows. */
   needsReview: number;
+  /** Accounts with the runtime state resolved, so the UI never guesses what is usable. */
+  accounts: ResolvedAccount[];
+}
+
+/**
+ * An account is connected only if the registry says so AND we hold credentials for it. A page
+ * account is never connected while Community Management API approval is missing, and nothing
+ * here substitutes the personal profile for it.
+ */
+export async function resolveAccounts(client: ClientEntry): Promise<ResolvedAccount[]> {
+  const token = await getLinkedInToken();
+  const tokenUsable = Boolean(token?.access_token && token.person_urn);
+
+  return client.accounts.map((account) => {
+    if (account.kind === "person") {
+      const connected = account.status === "connected" && tokenUsable;
+      return {
+        ...account,
+        connected,
+        reason: connected
+          ? ""
+          : tokenUsable
+            ? "This account is not marked connected in the registry."
+            : "No LinkedIn token on file. Authorize the account before a post can be produced.",
+      };
+    }
+    return {
+      ...account,
+      connected: false,
+      reason:
+        "Page posting needs LinkedIn Community Management API approval, which this build does not have.",
+    };
+  });
 }
 
 export async function clientSummaries(): Promise<ClientSummary[]> {
   const counts = await clientCounts();
-  return clients().map((client) => {
+  const summaries: ClientSummary[] = [];
+  for (const client of clients()) {
     const slate = counts[client.slug] ?? {};
-    return { ...client, counts: slate, needsReview: slate.pending ?? 0 };
-  });
+    summaries.push({
+      ...client,
+      counts: slate,
+      needsReview: slate.pending ?? 0,
+      accounts: await resolveAccounts(client),
+    });
+  }
+  return summaries;
 }
 
 export interface BatchResult {
@@ -201,6 +241,8 @@ export interface DryRunPayload {
   channel: string;
   language: string;
   body: string;
+  accountId: string;
+  accountLabel: string;
   authorUrn: string;
   kitPath: string;
   wouldPostTo: string;
@@ -224,12 +266,36 @@ const PUBLISHABLE: ItemStatus[] = ["approved", "scheduled", "manual"];
 // that posts an unapproved draft.
 export async function publishApproved(
   id: string,
-  options: { dryRun?: boolean } = {},
+  options: { dryRun?: boolean; accountId?: string } = {},
 ): Promise<PublishResult> {
   const item = await getItem(id);
   if (!item) throw new Error(`No item ${id}`);
   if (!PUBLISHABLE.includes(item.status)) {
     throw new Error(`Item is ${item.status}. Only an approved draft can publish.`);
+  }
+
+  const client = findClient(clients(), item.client);
+  const accounts = await resolveAccounts(client);
+  // No account given means the client's first connected one, and only if there is one. This runs
+  // for a real publish too: there is no silent fallback to the personal profile, ever.
+  const chosen = options.accountId
+    ? accounts.find((account) => account.id === options.accountId)
+    : accounts.find((account) => account.connected);
+
+  if (!chosen) {
+    throw new Error(
+      options.accountId
+        ? `Unknown account "${options.accountId}" for ${client.slug}.`
+        : `No connected account for ${client.slug}. Connect one before publishing.`,
+    );
+  }
+  if (!chosen.connected) {
+    throw new Error(`${chosen.label} is not connected. ${chosen.reason}`);
+  }
+  if (chosen.kind === "organization") {
+    throw new Error(
+      `${chosen.label} is a page account. Page publishing is out of scope until Community Management API approval lands.`,
+    );
   }
 
   // A dry run stops before the POST. It builds the kit and moves the item to its own state, so
@@ -242,7 +308,9 @@ export async function publishApproved(
       channel: item.channel,
       language: item.language,
       body: item.body,
-      authorUrn: token?.person_urn ?? "unauthenticated",
+      accountId: chosen.id,
+      accountLabel: chosen.label,
+      authorUrn: chosen.kind === "person" ? (token?.person_urn ?? "unauthenticated") : "",
       kitPath: kit.dir,
       wouldPostTo: "https://api.linkedin.com/rest/posts",
     };

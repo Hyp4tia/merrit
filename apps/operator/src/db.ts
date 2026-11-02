@@ -85,6 +85,19 @@ export async function initSchema(): Promise<void> {
       at timestamptz NOT NULL DEFAULT now()
     );
 
+    CREATE TABLE IF NOT EXISTS merrit_chat_message (
+      id bigserial PRIMARY KEY,
+      client text NOT NULL,
+      bot text NOT NULL,
+      account text,
+      role text NOT NULL CHECK (role IN ('user','assistant')),
+      body text NOT NULL,
+      meta jsonb,
+      created_at timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS merrit_chat_message_thread_idx
+      ON merrit_chat_message (client, bot, created_at);
+
     CREATE TABLE IF NOT EXISTS merrit_linkedin_token (
       id integer PRIMARY KEY DEFAULT 1 CHECK (id = 1),
       access_token text NOT NULL,
@@ -265,6 +278,50 @@ export async function saveLinkedInToken(
      ON CONFLICT (id) DO UPDATE SET access_token = $1, scope = $2, person_urn = $3, expires_at = $4, updated_at = now()`,
     [token.access_token, token.scope, token.person_urn, token.expires_at],
   );
+}
+
+export interface ChatMessageRow {
+  id: number;
+  client: string;
+  bot: string;
+  account: string | null;
+  role: "user" | "assistant";
+  body: string;
+  meta: Record<string, unknown> | null;
+  created_at: Date;
+}
+
+export async function listChat(
+  client: string,
+  bot: string,
+  limit = 100,
+): Promise<ChatMessageRow[]> {
+  const { rows } = await pool.query<ChatMessageRow>(
+    `SELECT * FROM merrit_chat_message
+     WHERE client = $1 AND bot = $2
+     ORDER BY created_at ASC, id ASC
+     LIMIT $3`,
+    [client, bot, limit],
+  );
+  return rows;
+}
+
+export async function addChatMessage(input: {
+  client: string;
+  bot: string;
+  account: string | null;
+  role: "user" | "assistant";
+  body: string;
+  meta?: Record<string, unknown> | null;
+}): Promise<ChatMessageRow> {
+  const { rows } = await pool.query<ChatMessageRow>(
+    `INSERT INTO merrit_chat_message (client, bot, account, role, body, meta)
+     VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+    [input.client, input.bot, input.account, input.role, input.body, input.meta ?? null],
+  );
+  const row = rows[0];
+  if (!row) throw new Error("Insert into merrit_chat_message returned no row");
+  return row;
 }
 
 export async function getLinkedInToken(): Promise<LinkedInToken | null> {

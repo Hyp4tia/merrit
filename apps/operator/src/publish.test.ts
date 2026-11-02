@@ -90,6 +90,8 @@ describe("dry run", () => {
       channel: "linkedin_personal",
       language: "en",
       body: state.current.body,
+      accountId: "kot-personal",
+      accountLabel: "Personal",
       authorUrn: "urn:li:person:DRYRUN",
       kitPath: path.join(kitDir, ID),
       wouldPostTo: "https://api.linkedin.com/rest/posts",
@@ -111,6 +113,21 @@ describe("dry run", () => {
     expect(setStatus).not.toHaveBeenCalledWith(ID, "published", expect.anything());
     expect(state.current.platform_post_id).toBeNull();
     expect(state.current.published_url).toBeNull();
+  });
+
+  it("refuses a disconnected page account instead of falling back to personal", async () => {
+    await expect(
+      actions.publishApproved(ID, { dryRun: true, accountId: "kot-page" }),
+    ).rejects.toThrow(/Kōt page is not connected.*Community Management API approval/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(setStatus).not.toHaveBeenCalled();
+  });
+
+  it("refuses an unknown account rather than guessing one", async () => {
+    await expect(actions.publishApproved(ID, { dryRun: true, accountId: "nope" })).rejects.toThrow(
+      /Unknown account "nope"/,
+    );
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("honours the MERRIT_DRY_RUN switch with no flag at all", async () => {

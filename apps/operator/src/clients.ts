@@ -4,12 +4,65 @@ import { parse } from "yaml";
 import type { Brand } from "./brand.ts";
 import { loadBrand } from "./brand.ts";
 
+export type AccountKind = "person" | "organization";
+export type AccountStatus = "connected" | "not_connected";
+
+export interface Account {
+  id: string;
+  label: string;
+  kind: AccountKind;
+  /** What the registry claims. The runtime resolves the truth on top of this. */
+  status: AccountStatus;
+  note: string;
+}
+
+export interface Bot {
+  id: string;
+  name: string;
+  description: string;
+}
+
 export interface ClientEntry {
   slug: string;
   name: string;
   /** Absolute path to this client's brand file. */
   file: string;
   note: string;
+  accounts: Account[];
+  bots: Bot[];
+}
+
+/** An account as the API reports it, with the runtime state resolved. */
+export interface ResolvedAccount extends Account {
+  connected: boolean;
+  /** Why it is not usable, in the words the UI shows. Empty when connected. */
+  reason: string;
+}
+
+function accountsOf(entry: Record<string, unknown>): Account[] {
+  const raw = Array.isArray(entry.accounts) ? entry.accounts : [];
+  return raw.map((account) => {
+    const record = account as Record<string, unknown>;
+    return {
+      id: String(record.id ?? ""),
+      label: String(record.label ?? record.id ?? ""),
+      kind: record.kind === "organization" ? "organization" : "person",
+      status: record.status === "connected" ? "connected" : "not_connected",
+      note: String(record.note ?? ""),
+    };
+  });
+}
+
+function botsOf(entry: Record<string, unknown>): Bot[] {
+  const raw = Array.isArray(entry.bots) ? entry.bots : [];
+  return raw.map((bot) => {
+    const record = bot as Record<string, unknown>;
+    return {
+      id: String(record.id ?? ""),
+      name: String(record.name ?? record.id ?? ""),
+      description: String(record.description ?? ""),
+    };
+  });
 }
 
 // The registry is the switch from one brand to many. Adding a client is one entry plus one
@@ -28,6 +81,8 @@ export function loadClients(registryFile: string): ClientEntry[] {
         name: String(entry.name ?? slug),
         file: path.resolve(dir, String(entry.file ?? `${slug}.yaml`)),
         note: String(entry.note ?? ""),
+        accounts: accountsOf(entry),
+        bots: botsOf(entry),
       };
     })
     .filter((entry) => entry.slug.length > 0);
@@ -44,6 +99,18 @@ export function findClient(clients: ClientEntry[], slug: string): ClientEntry {
     );
   }
   return client;
+}
+
+export function findAccount(client: ClientEntry, accountId: string): Account {
+  const account = client.accounts.find((entry) => entry.id === accountId);
+  if (!account) {
+    throw new Error(
+      `Unknown account "${accountId}" for ${client.slug}. Known: ${
+        client.accounts.map((entry) => entry.id).join(", ") || "none"
+      }`,
+    );
+  }
+  return account;
 }
 
 export function clientBrand(client: ClientEntry): Brand {

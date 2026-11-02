@@ -38,6 +38,23 @@ export interface ItemEvent {
   at: string;
 }
 
+export interface Account {
+  id: string;
+  label: string;
+  kind: "person" | "organization";
+  status: "connected" | "not_connected";
+  note: string;
+  connected: boolean;
+  /** Why it cannot post, in words for the UI. Empty when connected. */
+  reason: string;
+}
+
+export interface Bot {
+  id: string;
+  name: string;
+  description: string;
+}
+
 export interface ClientSummary {
   slug: string;
   name: string;
@@ -45,6 +62,26 @@ export interface ClientSummary {
   note: string;
   counts: Partial<Record<MerritStatus, number>>;
   needsReview: number;
+  accounts: Account[];
+  bots: Bot[];
+}
+
+export interface ChatTurn {
+  id: number;
+  role: "user" | "assistant";
+  body: string;
+  action?: string;
+  created: number;
+  at: string;
+}
+
+export interface SendChatResult {
+  action: "draft" | "answer" | "clarify";
+  reply: string;
+  created: number;
+  flagged: number;
+  failures: Array<{ angle: string; error: string }>;
+  messages: ChatTurn[];
 }
 
 export interface Violation {
@@ -57,6 +94,8 @@ export interface DryRunPayload {
   channel: string;
   language: string;
   body: string;
+  accountId: string;
+  accountLabel: string;
   authorUrn: string;
   kitPath: string;
   wouldPostTo: string;
@@ -134,11 +173,31 @@ export const merritApi = {
     return item;
   },
 
-  dryRun(id: string) {
+  // The account is explicit and required to be connected on the server: a dry run never falls
+  // back to the personal profile when the chosen account cannot post.
+  dryRun(id: string, accountId: string) {
     return request<{ payload: DryRunPayload; kit: string; item: ApprovalItem }>(
       `/items/${id}/dry-run`,
-      { method: "POST", body: "{}" },
+      { method: "POST", body: JSON.stringify({ account: accountId }) },
     );
+  },
+
+  async chat(client: string, bot: string): Promise<ChatTurn[]> {
+    const params = new URLSearchParams({ client, bot });
+    const { messages } = await request<{ messages: ChatTurn[] }>(`/chat?${params.toString()}`);
+    return messages;
+  },
+
+  sendChat(input: {
+    client: string;
+    bot: string;
+    account: string;
+    message: string;
+  }): Promise<SendChatResult> {
+    return request<SendChatResult>("/chat", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
   },
 
   check(client: string, language: Language, body: string) {
@@ -159,6 +218,7 @@ export const merritApi = {
 
 export const merritKeys = {
   clients: ["merrit", "clients"] as const,
+  chat: (client: string, bot: string) => ["merrit", "chat", client, bot] as const,
   items: (filters: Filters) => ["merrit", "items", filters] as const,
   item: (id: string | null) => ["merrit", "item", id] as const,
   check: (client: string, language: Language, body: string) =>

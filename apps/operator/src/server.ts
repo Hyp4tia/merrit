@@ -8,6 +8,7 @@ import {
   buildKitFor,
   checkDraft,
   clientSummaries,
+  clients as clientsRegistry,
   editBody,
   getItem,
   itemWithHistory,
@@ -16,6 +17,8 @@ import {
   rejectAndRegenerate,
   schedule,
 } from "./actions.ts";
+import { chatHistory, sendChatMessage } from "./chat.ts";
+import { findClient } from "./clients.ts";
 import { config } from "./config.ts";
 import type { ItemFilters, ItemStatus } from "./db.ts";
 import { initSchema } from "./db.ts";
@@ -271,6 +274,33 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (url.pathname === "/api/chat") {
+      const client = url.searchParams.get("client") ?? "";
+      const bot = url.searchParams.get("bot") ?? "";
+      if (req.method === "GET") {
+        if (!client || !bot) throw new Error("chat needs a client and a bot");
+        json(res, 200, { ok: true, messages: await chatHistory(client, bot) });
+        return;
+      }
+      if (req.method === "POST") {
+        const body = await readJson(req);
+        const clientSlug = String(body.client ?? "");
+        const botId = String(body.bot ?? "");
+        const registry = findClient(clientsRegistry(), clientSlug);
+        const bot = registry.bots.find((entry) => entry.id === botId);
+        if (!bot) throw new Error(`Unknown bot "${botId}" for ${clientSlug}`);
+        const result = await sendChatMessage({
+          client: clientSlug,
+          bot: botId,
+          botName: bot.name,
+          account: body.account ? String(body.account) : null,
+          message: String(body.message ?? ""),
+        });
+        json(res, 200, { ok: true, ...result });
+        return;
+      }
+    }
+
     if (req.method === "POST" && url.pathname === "/api/check") {
       const body = await readJson(req);
       json(res, 200, {
@@ -348,7 +378,10 @@ const server = createServer(async (req, res) => {
         return;
       }
       if (action === "dry-run") {
-        const result = await publishApproved(id, { dryRun: true });
+        const result = await publishApproved(id, {
+          dryRun: true,
+          accountId: body.account ? String(body.account) : undefined,
+        });
         json(res, 200, { ok: true, ...result, kit: result.kit?.dir });
         return;
       }

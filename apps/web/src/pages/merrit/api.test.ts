@@ -3,10 +3,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { merritApi } from "./api";
 
-// The real client, no module mock: this is what proves the URL shape and the error contract that
-// the page depends on.
+// The real client, no module mock: this proves the URL shape and the error contract the page
+// depends on.
 function stubFetch(payload: unknown, status = 200) {
-  // Takes the arguments fetch takes, so the call tuple carries the URL for assertions.
   const spy = vi.fn(
     async (..._args: unknown[]) => new Response(JSON.stringify(payload), { status }),
   );
@@ -46,23 +45,42 @@ describe("merrit api client", () => {
   });
 
   it("has no publish method at all, only a dry run", () => {
-    expect(Object.keys(merritApi)).toContain("dryRun");
-    expect(Object.keys(merritApi)).not.toContain("publish");
+    const keys = Object.keys(merritApi);
+    expect(keys).toContain("dryRun");
+    expect(keys).not.toContain("publish");
   });
 
-  it("posts to the dry-run route for a payload", async () => {
-    const spy = stubFetch({
-      payload: { wouldPostTo: "https://api.linkedin.com/rest/posts" },
-      kit: "/tmp/kit",
-    });
-    const result = await merritApi.dryRun("abc");
+  it("sends the chosen account with the dry run, never a default", async () => {
+    const spy = stubFetch({ payload: {}, kit: "/tmp/kit" });
+    await merritApi.dryRun("abc", "kot-page");
     expect(String(spy.mock.calls[0]?.[0])).toBe("/merrit-api/items/abc/dry-run");
-    expect(result.payload.wouldPostTo).toBe("https://api.linkedin.com/rest/posts");
+    const init = spy.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(init.body))).toEqual({ account: "kot-page" });
+  });
+
+  it("loads and posts chat through the operator", async () => {
+    const spy = stubFetch({ messages: [] });
+    await merritApi.chat("kot", "kot-writer");
+    expect(String(spy.mock.calls[0]?.[0])).toBe("/merrit-api/chat?client=kot&bot=kot-writer");
+
+    await merritApi.sendChat({
+      client: "kot",
+      bot: "kot-writer",
+      account: "kot-personal",
+      message: "hi",
+    });
+    const init = spy.mock.calls[1]?.[1] as RequestInit;
+    expect(JSON.parse(String(init.body))).toEqual({
+      client: "kot",
+      bot: "kot-writer",
+      account: "kot-personal",
+      message: "hi",
+    });
   });
 
   it("turns an ok:false payload into a thrown error with the server's message", async () => {
-    stubFetch({ ok: false, error: "Only an approved draft can publish." });
-    await expect(merritApi.dryRun("abc")).rejects.toThrow("Only an approved draft can publish.");
+    stubFetch({ ok: false, error: "Kōt page is not connected. Page posting needs approval." });
+    await expect(merritApi.dryRun("abc", "kot-page")).rejects.toThrow("Kōt page is not connected");
   });
 
   it("throws on a transport failure too", async () => {

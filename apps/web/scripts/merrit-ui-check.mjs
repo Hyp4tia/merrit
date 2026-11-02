@@ -1,13 +1,11 @@
-// Screenshot and click-through harness for the Merrit page.
+// Screenshot and click-through harness for the Merrit surfaces.
 //
 // Run against a live dev stack (5173 for the web app, 3300 for the operator):
 //   node apps/web/scripts/merrit-ui-check.mjs [output-directory]
 //
-// It proves three things by driving the real UI: the queue renders with live data, the detail
-// panel opens, and approve, reject and dry run work end to end. It never publishes: the only
-// payload path it touches is the dry run, which sends nothing.
-//
-// Approve and reject run against a demo brand, so the live Kōt queue is only read.
+// It drives the real UI: the chat home with the bot roster, the account selector and its
+// disconnected state, the queue, and the draft detail. It never publishes, and the only payload
+// path it touches is the dry run.
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { chromium } from "@playwright/test";
@@ -26,6 +24,7 @@ page.on("console", (message) => {
 });
 page.on("pageerror", (error) => problems.push(String(error)));
 
+const chat = () => page.getByRole("region", { name: "Chat with the bot" });
 const queue = () => page.getByRole("region", { name: "Approval queue" });
 const detail = () => page.getByRole("complementary", { name: "Draft detail" });
 
@@ -35,97 +34,67 @@ async function shot(name) {
   console.log(`screenshot ${file}`);
 }
 
-async function openBrand(name) {
-  await page.getByRole("button", { name: new RegExp(name) }).click();
-  await queue().waitFor();
-  await page.waitForTimeout(700);
-}
-
-function pendingCards() {
-  return queue().locator("button").filter({ hasText: "Pending" });
-}
-
 try {
   await page.goto(`${base}/merrit`, { waitUntil: "networkidle" });
   await page.getByText("Dry run only. Publishing is disabled").waitFor({ timeout: 20_000 });
-  await queue().waitFor();
 
-  // 1. Queue on the live brand, three brands in the rail.
-  const rail = (await page.getByRole("complementary", { name: "Brands" }).innerText())
+  // 1. Home: bot roster, brand and account in the navbar, the conversation in the centre.
+  await chat().waitFor({ timeout: 20_000 });
+  const roster = (await page.getByRole("complementary", { name: "Bots" }).innerText())
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean);
-  console.log(`brand rail: ${rail.join(" | ")}`);
-  console.log(`kot cards in queue: ${await queue().locator("button").count()}`);
-  await shot("01-queue");
+  console.log(`bot roster: ${roster.join(" | ")}`);
 
-  // 2. Detail panel. Approve and reject run on a demo brand so the live queue stays read only,
-  // and on whichever demo brand currently has work in it.
-  let cards = pendingCards();
-  let demoBrand = "";
-  for (const candidate of ["BARQ Auto Spa", "NŪR Dental Studio"]) {
-    await openBrand(candidate);
-    cards = pendingCards();
-    if ((await cards.count()) > 0) {
-      demoBrand = candidate;
-      break;
-    }
-  }
-  const count = await cards.count();
-  console.log(`demo brand with pending work: ${demoBrand || "none"} (${count} pending)`);
-  if (!demoBrand) throw new Error("No pending demo draft to exercise. Generate one first.");
-
-  await cards.first().click();
-  const body = detail().getByRole("textbox", { name: "Draft body" });
-  await body.waitFor({ timeout: 20_000 });
+  const accounts = page.getByRole("combobox", { name: "Account" });
   console.log(
-    `detail body starts: ${(await body.inputValue()).slice(0, 70).replace(/\s+/g, " ")}...`,
+    `accounts: ${await accounts
+      .locator("option")
+      .allInnerTexts()
+      .then((list) => list.join(" | "))}`,
   );
-  await shot("02-detail");
+  const turns = await chat().locator("p, div").count();
+  console.log(`chat rendered, elements: ${turns}`);
+  await shot("01-home-chat");
 
-  // 3. Approve.
-  await detail().getByRole("button", { name: "Approve" }).click();
-  await detail().getByText("Approved. Publishing stays disabled").waitFor({ timeout: 30_000 });
-  await page.waitForTimeout(900);
-  const statusLine = (await detail().innerText()).includes("Approved") ? "approved" : "unexpected";
-  console.log(`approved, panel reports: ${statusLine}`);
-  await shot("03-approved");
+  // 2. The page account: visible, selectable, and obviously not usable.
+  await accounts.selectOption("kot-page");
+  await page.waitForTimeout(600);
+  await shot("02-account-not-connected");
+  const banner = await page
+    .getByText(/is not connected/)
+    .first()
+    .innerText()
+    .catch(() => "");
+  console.log(`disconnected banner: ${banner.replace(/\s+/g, " ").slice(0, 140)}`);
 
-  // 4. Dry run: the payload, and nothing sent.
-  await detail().getByRole("button", { name: "Dry run, show payload" }).click();
-  await detail().getByText("Payload that would be sent").waitFor({ timeout: 30_000 });
-  await detail().getByText("Payload that would be sent").scrollIntoViewIfNeeded();
-  await page.waitForTimeout(300);
-  const payloadText = await detail().innerText();
-  const endpoint = payloadText.split("\n").find((line) => line.includes("api.linkedin.com")) ?? "?";
-  const author = payloadText.split("\n").find((line) => line.includes("urn:li:person")) ?? "?";
-  console.log(`dry run endpoint: ${endpoint.trim()}`);
-  console.log(`dry run author:   ${author.trim()}`);
-  await shot("04-dry-run-payload");
+  // 3. Back to Personal, then into the queue from the sidebar.
+  await accounts.selectOption("kot-personal");
+  await page.waitForTimeout(400);
+  await page.getByRole("button", { name: "Review queue" }).click();
+  await queue().waitFor({ timeout: 20_000 });
+  await page.waitForTimeout(700);
+  console.log(`queue cards: ${await queue().locator("button").count()}`);
+  await shot("03-queue");
 
-  // 5. Reject another draft on the same demo brand, with a written reason. It drives a rewrite.
-  const remaining = pendingCards();
-  if ((await remaining.count()) > 0) {
-    await remaining.first().click();
-    const panel = detail();
-    await panel.getByRole("textbox", { name: "Draft body" }).waitFor({ timeout: 20_000 });
-    await panel
-      .getByRole("textbox", { name: "Rejection reason" })
-      .fill(
-        "Opens with a claim the brand file does not support. Start with the panel reading instead.",
-      );
-    await panel.getByRole("button", { name: "Reject" }).click();
-    await panel.getByText(/replacement draft was written|Rejected\./).waitFor({ timeout: 90_000 });
-    console.log("reject: accepted with a written reason, replacement requested");
-    await page.waitForTimeout(900);
-    await shot("05-rejected");
+  // 4. Detail: the dry-run control and its honest state for the selected account.
+  const cards = queue().locator("button").filter({ hasText: "Pending" });
+  if ((await cards.count()) > 0) {
+    await cards.first().click();
+    await detail().getByRole("textbox", { name: "Draft body" }).waitFor({ timeout: 20_000 });
+    await page.waitForTimeout(700);
+    const dryRun = detail().getByRole("button", { name: "Dry run, show payload" });
+    console.log(`dry-run button disabled: ${await dryRun.isDisabled()}`);
+    const caption = await detail()
+      .getByText(/Publishing is disabled|not connected|No LinkedIn token/)
+      .last()
+      .innerText()
+      .catch(() => "");
+    console.log(`caption: ${caption.replace(/\s+/g, " ").slice(0, 160)}`);
+    await shot("04-detail");
   } else {
-    console.log("reject: no second pending draft available");
+    console.log("no pending draft to open");
   }
-
-  // 6. Switch brand, proving the rail and queue follow the switch.
-  await openBrand("NŪR Dental Studio");
-  await shot("06-brand-switch");
 
   console.log(`console errors: ${problems.length}`);
   for (const problem of problems.slice(0, 8)) console.log(`  ! ${problem}`);
