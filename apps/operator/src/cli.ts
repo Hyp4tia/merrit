@@ -6,8 +6,10 @@ import {
   generateBatch,
   getItem,
   listItems,
+  markDeleted,
   markPublishedManually,
   publishApproved,
+  queueStats,
   rejectAndRegenerate,
   schedule,
 } from "./actions.ts";
@@ -40,10 +42,15 @@ function usage(): void {
   show <id>                      full text of one draft
   approve <id>                   approve for publishing
   reject <id> --reason "..."     reject and redraft with that reason
-  publish <id>                   publish an approved draft to LinkedIn
+  publish <id> [--dry-run]       publish an approved draft, or rehearse without posting
   kit <id>                       write the copy/download publish kit
   published <id> --url <url>     record a manual publish
+  deleted <id> [--note "..."]    mark a published post as taken down
+  stats                          queue counts, live posts and token spend
   schedule <id> --at <iso>       schedule an approved draft
+
+  MERRIT_DRY_RUN=1 makes every publish a rehearsal. A dry run never calls LinkedIn and
+  records the item as dry_run, never as published.
 
 Queue UI: http://127.0.0.1:${config.port}`);
 }
@@ -140,9 +147,18 @@ try {
     case "publish": {
       const id = positional(0);
       if (!id) throw new Error("publish needs an id");
-      const result = await publishApproved(id);
+      const result = await publishApproved(id, { dryRun: rest.includes("--dry-run") });
       if (result.mode === "api") {
         console.log(`published ${result.url}`);
+      } else if (result.mode === "dry-run") {
+        const payload = result.payload;
+        console.log("dry run, nothing was sent to LinkedIn");
+        console.log(`  would POST to: ${payload?.wouldPostTo}`);
+        console.log(`  author:        ${payload?.authorUrn}`);
+        console.log(`  channel:       ${payload?.channel} (${payload?.language})`);
+        console.log(`  kit:           ${payload?.kitPath}`);
+        console.log(`  body (${payload?.body.length ?? 0} chars):`);
+        console.log(payload?.body);
       } else {
         console.log(`publish blocked, kit at ${result.kit?.dir}`);
         console.log(result.detail);
@@ -162,6 +178,25 @@ try {
       const url = flag("url");
       if (!id || !url) throw new Error("published needs an id and --url");
       console.log(`recorded ${(await markPublishedManually(id, url)).id} -> ${url}`);
+      break;
+    }
+    case "deleted": {
+      const id = positional(0);
+      if (!id) throw new Error("deleted needs an id");
+      const item = await markDeleted(id, flag("note") ?? "");
+      console.log(`deleted ${item.id}`);
+      console.log(
+        `  kept for audit: ${item.published_url ?? "no url"} ${item.platform_post_id ?? ""}`,
+      );
+      break;
+    }
+    case "stats": {
+      const stats = await queueStats();
+      for (const [status, count] of Object.entries(stats.counts).sort()) {
+        console.log(`  ${status.padEnd(10)} ${count}`);
+      }
+      console.log(`  published live (deleted excluded): ${stats.publishedLive}`);
+      console.log(`  tokens ${stats.promptTokens} in / ${stats.completionTokens} out`);
       break;
     }
     case "schedule": {

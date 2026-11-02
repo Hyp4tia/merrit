@@ -1,7 +1,15 @@
 import pg from "pg";
 import { config } from "./config.ts";
 
-export type ItemStatus = "pending" | "approved" | "rejected" | "scheduled" | "published" | "manual";
+export type ItemStatus =
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "scheduled"
+  | "published"
+  | "manual"
+  | "dry_run"
+  | "deleted";
 
 export interface ApprovalItem {
   id: string;
@@ -41,7 +49,7 @@ export async function initSchema(): Promise<void> {
       angle text NOT NULL,
       body text NOT NULL,
       status text NOT NULL DEFAULT 'pending'
-        CHECK (status IN ('pending','approved','rejected','scheduled','published','manual')),
+        CHECK (status IN ('pending','approved','rejected','scheduled','published','manual','dry_run','deleted')),
       reject_reason text,
       model text,
       prompt_version text,
@@ -62,6 +70,12 @@ export async function initSchema(): Promise<void> {
     ALTER TABLE merrit_approval_item ADD COLUMN IF NOT EXISTS prompt_tokens integer;
     ALTER TABLE merrit_approval_item ADD COLUMN IF NOT EXISTS completion_tokens integer;
     ALTER TABLE merrit_approval_item ADD COLUMN IF NOT EXISTS review_reason text;
+
+    -- Widen the status set for the dry-run and deleted states. Dropped and re-added every boot
+    -- so the constraint always matches this file; a row outside the set fails loudly at startup.
+    ALTER TABLE merrit_approval_item DROP CONSTRAINT IF EXISTS merrit_approval_item_status_check;
+    ALTER TABLE merrit_approval_item ADD CONSTRAINT merrit_approval_item_status_check
+      CHECK (status IN ('pending','approved','rejected','scheduled','published','manual','dry_run','deleted'));
 
     CREATE TABLE IF NOT EXISTS merrit_event (
       id bigserial PRIMARY KEY,

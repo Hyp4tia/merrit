@@ -127,6 +127,8 @@ States, and what each one means:
 | `scheduled` | Approved with a publish time attached. Still publishes only through the API. |
 | `published` | Live, with the URL recorded. |
 | `manual` | Publishing was blocked (no token, missing scope, platform review). A publish kit was written instead. |
+| `dry_run` | A rehearsal ran. The payload was produced and the kit written, nothing was sent, and it is not a publication. |
+| `deleted` | Was published, then taken down. The URL and post urn stay on the row for the audit trail. |
 
 The approval gate is enforced in `apps/operator/src/actions.ts`, not just in the UI:
 `publishApproved` refuses any item that is not `approved` or `scheduled`.
@@ -188,14 +190,43 @@ see.
 pnpm vitest run apps/operator
 ```
 
-34 tests covering the incident copy verbatim (paid scoping week, fixed price for fixed scope,
+44 tests covering the incident copy verbatim (paid scoping week, fixed price for fixed scope,
 milestone balance, hourly rate, package tier), invented amount, percentage and duration, the real
 pricing post passing unchanged, Arabic digits, the regenerate-once-then-flag flow, commitments
-being read from the brand file rather than hardcoded, and the em dash, exclamation mark and emoji
-rules that must not regress. The generation tests replace only the
+being read from the brand file rather than hardcoded, dry runs making zero network calls, the
+approval gate refusing unapproved drafts, deleted posts keeping their audit trail, and the em
+dash, exclamation mark and emoji rules that must not regress. The generation tests replace only the
 model call, so the brand rules and the guard run for real.
 
 ---
+
+## Dry run
+
+A rehearsal that stops before the POST, and proves what would have been sent:
+
+```bash
+pnpm --filter @merrit/operator exec tsx src/cli.ts publish <id> --dry-run
+MERRIT_DRY_RUN=1 pnpm --filter @merrit/operator exec tsx src/cli.ts publish <id>
+```
+
+It prints the payload (channel, author urn, body, kit path, and the endpoint it would call),
+writes the kit, and moves the item to `dry_run`. It never calls LinkedIn, so it cannot create a
+post, and the state means it can never be read as published. The approval gate applies to a
+rehearsal as well: a pending or rejected draft is refused, so a dry run cannot quietly move work
+out of review.
+
+## Taking a post down
+
+```bash
+pnpm --filter @merrit/operator exec tsx src/cli.ts deleted <id> --note "owner removed it"
+```
+
+The row moves to `deleted` and keeps `published_url` and the post urn. `stats` and the live
+published count exclude it, because a post that was taken down is not a live post:
+
+```bash
+pnpm --filter @merrit/operator exec tsx src/cli.ts stats
+```
 
 ## Publishing to LinkedIn
 

@@ -59,4 +59,7 @@ export const config = {
     version: process.env.LINKEDIN_VERSION ?? "202601",
   },
   kitDir: process.env.MERRIT_KIT_DIR ?? path.join(repoRoot, "..", ".merrit-kit"),
+  // Env-level dry run. `publish --dry-run` overrides it per call; either one stops before the
+  // LinkedIn POST and records the item as dry_run so it can never read as published.
+  dryRun: /^(1|true|yes)$/i.test(process.env.MERRIT_DRY_RUN ?? ""),
 } as const;

@@ -2,7 +2,7 @@ import type { Language } from "./brand.ts";
 import { loadBrand } from "./brand.ts";
 import { config } from "./config.ts";
 import type { ApprovalItem, ItemStatus } from "./db.ts";
-import { addEvent, getItem, insertItem, listItems, setStatus } from "./db.ts";
+import { addEvent, getItem, getLinkedInToken, insertItem, listItems, setStatus } from "./db.ts";
 import type { Angle } from "./generate.ts";
 import { BrandReviewRequired, DEFAULT_ANGLES, generateDraft, PROMPT_VERSION } from "./generate.ts";
 import type { Kit } from "./kit.ts";
@@ -163,23 +163,59 @@ export async function rejectAndRegenerate(id: string, reason: string): Promise<R
   }
 }
 
+export interface DryRunPayload {
+  itemId: string;
+  channel: string;
+  language: string;
+  body: string;
+  authorUrn: string;
+  kitPath: string;
+  wouldPostTo: string;
+}
+
 export interface PublishResult {
-  mode: "api" | "manual";
+  mode: "api" | "manual" | "dry-run";
   item: ApprovalItem;
   url?: string;
   kit?: Kit;
   detail?: string;
+  /** Exactly what a real publish would send. Present only for a dry run. */
+  payload?: DryRunPayload;
 }
+
+// manual means a human already approved it and the API path failed, so retrying after the
+// credentials or permissions are fixed is legitimate. Nothing else can reach publish.
+const PUBLISHABLE: ItemStatus[] = ["approved", "scheduled", "manual"];
 
 // Publishing is gated on a human approval that already happened. There is no path here
 // that posts an unapproved draft.
-export async function publishApproved(id: string): Promise<PublishResult> {
+export async function publishApproved(
+  id: string,
+  options: { dryRun?: boolean } = {},
+): Promise<PublishResult> {
   const item = await getItem(id);
   if (!item) throw new Error(`No item ${id}`);
-  // manual means a human already approved it and the API path failed, so retrying after the
-  // credentials or permissions are fixed is legitimate. Nothing else can reach publish.
-  if (!["approved", "scheduled", "manual"].includes(item.status)) {
+  if (!PUBLISHABLE.includes(item.status)) {
     throw new Error(`Item is ${item.status}. Only an approved draft can publish.`);
+  }
+
+  // A dry run stops before the POST. It builds the kit and moves the item to its own state, so
+  // a rehearsal can never be read as a publication.
+  if (options.dryRun ?? config.dryRun) {
+    const kit = buildKit(item);
+    const token = await getLinkedInToken();
+    const payload: DryRunPayload = {
+      itemId: item.id,
+      channel: item.channel,
+      language: item.language,
+      body: item.body,
+      authorUrn: token?.person_urn ?? "unauthenticated",
+      kitPath: kit.dir,
+      wouldPostTo: "https://api.linkedin.com/rest/posts",
+    };
+    const updated = await setStatus(id, "dry_run", { kit_path: kit.dir });
+    await addEvent(id, "dry-run", `kit ${kit.dir}`);
+    return { mode: "dry-run", item: updated ?? item, kit, payload };
   }
 
   try {
@@ -211,6 +247,42 @@ export async function markPublishedManually(id: string, url: string): Promise<Ap
   await addEvent(id, "published-manually", url);
   if (!updated) throw new Error(`No item ${id}`);
   return updated;
+}
+
+/**
+ * The owner took the post down. The row keeps published_url and platform_post_id so the audit
+ * trail survives, and the status stops it counting as a live post anywhere.
+ */
+export async function markDeleted(id: string, note = ""): Promise<ApprovalItem> {
+  const item = await getItem(id);
+  if (!item) throw new Error(`No item ${id}`);
+  if (item.status === "deleted") return item;
+
+  const updated = await setStatus(id, "deleted");
+  await addEvent(id, "deleted", note || item.published_url || "no note");
+  if (!updated) throw new Error(`No item ${id}`);
+  return updated;
+}
+
+export interface QueueStats {
+  counts: Record<string, number>;
+  /** Counted by status, so a post that was later deleted cannot inflate it. */
+  publishedLive: number;
+  promptTokens: number;
+  completionTokens: number;
+}
+
+export async function queueStats(): Promise<QueueStats> {
+  const items = await listItems();
+  const counts: Record<string, number> = {};
+  for (const item of items) counts[item.status] = (counts[item.status] ?? 0) + 1;
+
+  return {
+    counts,
+    publishedLive: items.filter((item) => item.status === "published").length,
+    promptTokens: items.reduce((total, item) => total + (item.prompt_tokens ?? 0), 0),
+    completionTokens: items.reduce((total, item) => total + (item.completion_tokens ?? 0), 0),
+  };
 }
 
 export async function buildKitFor(id: string): Promise<Kit> {
