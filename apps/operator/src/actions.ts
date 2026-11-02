@@ -1,16 +1,48 @@
 import type { Language } from "./brand.ts";
-import { loadBrand } from "./brand.ts";
+import type { ClientEntry } from "./clients.ts";
+import { clientBrand, findClient, loadClients } from "./clients.ts";
+import { checkCommercialTerms, extractCommercialFacts } from "./commercial.ts";
 import { config } from "./config.ts";
 import type { ApprovalItem, ItemStatus } from "./db.ts";
-import { addEvent, getItem, getLinkedInToken, insertItem, listItems, setStatus } from "./db.ts";
+import {
+  addEvent,
+  clientCounts,
+  getEvents,
+  getItem,
+  getLinkedInToken,
+  insertItem,
+  listItems,
+  setStatus,
+  updateBody,
+} from "./db.ts";
 import type { Angle } from "./generate.ts";
 import { BrandReviewRequired, DEFAULT_ANGLES, generateDraft, PROMPT_VERSION } from "./generate.ts";
 import type { Kit } from "./kit.ts";
 import { buildKit } from "./kit.ts";
 import { LinkedInError, publishPost } from "./publish-linkedin.ts";
+import type { Violation } from "./validate.ts";
+import { validatePost } from "./validate.ts";
 
-export function brand() {
-  return loadBrand(config.brandFile, config.clientSlug);
+export function clients(): ClientEntry[] {
+  return loadClients(config.clientsFile);
+}
+
+export function brand(slug: string = config.clientSlug) {
+  return clientBrand(findClient(clients(), slug));
+}
+
+export interface ClientSummary extends ClientEntry {
+  counts: Record<string, number>;
+  /** Drafts waiting on a human. This is the number the left rail shows. */
+  needsReview: number;
+}
+
+export async function clientSummaries(): Promise<ClientSummary[]> {
+  const counts = await clientCounts();
+  return clients().map((client) => {
+    const slate = counts[client.slug] ?? {};
+    return { ...client, counts: slate, needsReview: slate.pending ?? 0 };
+  });
 }
 
 export interface BatchResult {
@@ -23,8 +55,9 @@ export interface BatchResult {
 export async function generateBatch(
   count: number,
   angles: Angle[] = DEFAULT_ANGLES,
+  clientSlug: string = config.clientSlug,
 ): Promise<BatchResult> {
-  const brandFile = brand();
+  const brandFile = brand(clientSlug);
   const wanted = angles.slice(0, count);
   const created: ApprovalItem[] = [];
   const flagged: ApprovalItem[] = [];
@@ -283,6 +316,46 @@ export async function queueStats(): Promise<QueueStats> {
     promptTokens: items.reduce((total, item) => total + (item.prompt_tokens ?? 0), 0),
     completionTokens: items.reduce((total, item) => total + (item.completion_tokens ?? 0), 0),
   };
+}
+
+export interface DraftCheck {
+  brandViolations: Violation[];
+  commercialViolations: Violation[];
+}
+
+/**
+ * Runs both guards against arbitrary text, so the detail panel can show warnings inline while
+ * the owner edits instead of only at generation time.
+ */
+export function checkDraft(slug: string, language: Language, body: string): DraftCheck {
+  const brandFile = brand(slug);
+  return {
+    brandViolations: validatePost(body, brandFile, language),
+    commercialViolations: checkCommercialTerms(body, extractCommercialFacts(brandFile)),
+  };
+}
+
+export async function itemWithHistory(id: string) {
+  const item = await getItem(id);
+  if (!item) throw new Error(`No item ${id}`);
+  return { item, events: await getEvents(id) };
+}
+
+export async function editBody(id: string, body: string): Promise<ApprovalItem> {
+  const trimmed = body.trim();
+  if (!trimmed) throw new Error("An empty body cannot be saved");
+
+  const item = await getItem(id);
+  if (!item) throw new Error(`No item ${id}`);
+  if (item.status === "published" || item.status === "deleted") {
+    throw new Error(
+      `Item is ${item.status}. Its body is the record of what was sent, so it is read only.`,
+    );
+  }
+
+  const updated = await updateBody(id, trimmed);
+  if (!updated) throw new Error(`No item ${id}`);
+  return updated;
 }
 
 export async function buildKitFor(id: string): Promise<Kit> {

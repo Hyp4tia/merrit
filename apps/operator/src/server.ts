@@ -6,18 +6,31 @@ import type { ApprovalItem } from "./actions.ts";
 import {
   approve,
   buildKitFor,
+  checkDraft,
+  clientSummaries,
+  editBody,
   getItem,
+  itemWithHistory,
   listItems,
-  markPublishedManually,
   publishApproved,
   rejectAndRegenerate,
   schedule,
 } from "./actions.ts";
 import { config } from "./config.ts";
+import type { ItemFilters, ItemStatus } from "./db.ts";
 import { initSchema } from "./db.ts";
 import { authorizeUrl, exchangeCode, isConfigured } from "./publish-linkedin.ts";
 
-const STATUS_ORDER = ["pending", "approved", "scheduled", "manual", "published", "rejected"];
+const STATUS_ORDER = [
+  "pending",
+  "approved",
+  "scheduled",
+  "manual",
+  "dry_run",
+  "published",
+  "deleted",
+  "rejected",
+];
 const oauthStates = new Set<string>();
 
 function escapeHtml(value: string): string {
@@ -59,8 +72,9 @@ function card(item: ApprovalItem): string {
     actions.push(`<button data-act="approve" data-id="${item.id}">Approve</button>`);
     actions.push(`<button class="ghost" data-act="reject" data-id="${item.id}">Reject</button>`);
   }
-  if (item.status === "approved" || item.status === "scheduled") {
-    actions.push(`<button data-act="publish" data-id="${item.id}">Publish to LinkedIn</button>`);
+  // No publish control anywhere in the UI in this build. Dry run is the only payload action.
+  if (["approved", "scheduled", "manual"].includes(item.status)) {
+    actions.push(`<button data-act="dry-run" data-id="${item.id}">Dry run</button>`);
   }
   actions.push(`<button class="ghost" data-act="kit" data-id="${item.id}">Publish kit</button>`);
 
@@ -146,7 +160,7 @@ function page(items: ApprovalItem[]): string {
 <body>
 <header class="top">
   <h1>Merrit</h1>
-  <p>Approval queue · ${escapeHtml(config.clientSlug)} · LinkedIn personal</p>
+  <p>Approval queue · ${escapeHtml(config.clientSlug)} · publishing disabled · dry run only</p>
 </header>
 <main>
   <div class="toolbar">
@@ -206,8 +220,8 @@ function page(items: ApprovalItem[]): string {
       }
       const result = await post('/api/items/' + id + '/' + action, {});
       if (!result.ok) { toast(result.error); button.disabled = false; return; }
-      if (action === 'publish') {
-        toast(result.mode === 'api' ? 'Published: ' + result.url : 'Publish blocked, kit written to ' + result.kit + '. ' + (result.detail || ''));
+      if (action === 'dry-run') {
+        toast('Dry run: ' + (result.payload ? result.payload.wouldPostTo + ' as ' + result.payload.authorUrn : 'no payload'));
       } else if (action === 'kit') {
         toast('Kit written to ' + result.kit);
       } else {
@@ -237,7 +251,36 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && url.pathname === "/api/items") {
-      json(res, 200, { items: await listItems() });
+      const filters: ItemFilters = {};
+      const client = url.searchParams.get("client");
+      const status = url.searchParams.get("status");
+      const channel = url.searchParams.get("channel");
+      const language = url.searchParams.get("language");
+      const q = url.searchParams.get("q");
+      if (client) filters.client = client;
+      if (status) filters.status = status as ItemStatus;
+      if (channel) filters.channel = channel;
+      if (language) filters.language = language;
+      if (q) filters.q = q;
+      json(res, 200, { items: await listItems(filters) });
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/clients") {
+      json(res, 200, { clients: await clientSummaries() });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/check") {
+      const body = await readJson(req);
+      json(res, 200, {
+        ok: true,
+        ...checkDraft(
+          String(body.client ?? ""),
+          body.language === "ar" ? "ar" : "en",
+          String(body.body ?? ""),
+        ),
+      });
       return;
     }
 
@@ -250,7 +293,12 @@ const server = createServer(async (req, res) => {
       const body = await readJson(req);
       const count = Math.min(Number(body.count ?? 7), 14);
       const { generateBatch } = await import("./actions.ts");
-      const result = await generateBatch(count);
+      const { config } = await import("./config.ts");
+      const result = await generateBatch(
+        count,
+        undefined,
+        String(body.client ?? config.clientSlug),
+      );
       json(res, 200, {
         ok: true,
         created: result.created.length,
@@ -260,10 +308,26 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    const itemRoute =
-      /^\/api\/items\/([0-9a-f-]{36})\/(approve|reject|publish|kit|schedule|published)$/.exec(
-        url.pathname,
-      );
+    const detailRoute = /^\/api\/items\/([0-9a-f-]{36})$/.exec(url.pathname);
+    if (detailRoute?.[1]) {
+      const id = detailRoute[1];
+      if (req.method === "GET") {
+        json(res, 200, { ok: true, ...(await itemWithHistory(id)) });
+        return;
+      }
+      if (req.method === "PATCH") {
+        const body = await readJson(req);
+        json(res, 200, { ok: true, item: await editBody(id, String(body.body ?? "")) });
+        return;
+      }
+    }
+
+    // Publishing is deliberately not routed over HTTP in this build: the UI must not be able to
+    // reach it, so the CLI is the only publish surface. dry-run is the one action here that
+    // produces a payload, and it sends nothing.
+    const itemRoute = /^\/api\/items\/([0-9a-f-]{36})\/(approve|reject|dry-run|kit|schedule)$/.exec(
+      url.pathname,
+    );
     if (req.method === "POST" && itemRoute) {
       const id = itemRoute[1];
       const action = itemRoute[2];
@@ -283,8 +347,8 @@ const server = createServer(async (req, res) => {
         });
         return;
       }
-      if (action === "publish") {
-        const result = await publishApproved(id);
+      if (action === "dry-run") {
+        const result = await publishApproved(id, { dryRun: true });
         json(res, 200, { ok: true, ...result, kit: result.kit?.dir });
         return;
       }
@@ -297,10 +361,6 @@ const server = createServer(async (req, res) => {
         const when = new Date(String(body.at ?? ""));
         if (Number.isNaN(when.getTime())) throw new Error("Invalid schedule time");
         json(res, 200, { ok: true, item: await schedule(id, when) });
-        return;
-      }
-      if (action === "published") {
-        json(res, 200, { ok: true, item: await markPublishedManually(id, String(body.url ?? "")) });
         return;
       }
     }

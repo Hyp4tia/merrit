@@ -151,14 +151,73 @@ export async function getItem(id: string): Promise<ApprovalItem | null> {
   return rows[0] ?? null;
 }
 
-export async function listItems(status?: ItemStatus): Promise<ApprovalItem[]> {
-  const { rows } = status
-    ? await pool.query<ApprovalItem>(
-        "SELECT * FROM merrit_approval_item WHERE status = $1 ORDER BY created_at DESC",
-        [status],
-      )
-    : await pool.query<ApprovalItem>("SELECT * FROM merrit_approval_item ORDER BY created_at DESC");
+export interface ItemFilters {
+  client?: string;
+  status?: ItemStatus;
+  channel?: string;
+  language?: string;
+  /** Free text over the draft body and its angle. */
+  q?: string;
+}
+
+export async function listItems(filters: ItemFilters = {}): Promise<ApprovalItem[]> {
+  const values: unknown[] = [];
+  const where: string[] = [];
+
+  const add = (clause: (placeholder: string) => string, value: unknown): void => {
+    values.push(value);
+    where.push(clause(`$${values.length}`));
+  };
+
+  if (filters.client) add((p) => `client = ${p}`, filters.client);
+  if (filters.status) add((p) => `status = ${p}`, filters.status);
+  if (filters.channel) add((p) => `channel = ${p}`, filters.channel);
+  if (filters.language) add((p) => `language = ${p}`, filters.language);
+  if (filters.q) add((p) => `(body ILIKE ${p} OR angle ILIKE ${p})`, `%${filters.q}%`);
+
+  const clause = where.length ? ` WHERE ${where.join(" AND ")}` : "";
+  const { rows } = await pool.query<ApprovalItem>(
+    `SELECT * FROM merrit_approval_item${clause} ORDER BY created_at DESC`,
+    values,
+  );
   return rows;
+}
+
+export async function updateBody(id: string, body: string): Promise<ApprovalItem | null> {
+  const { rows } = await pool.query<ApprovalItem>(
+    "UPDATE merrit_approval_item SET body = $2, updated_at = now() WHERE id = $1 RETURNING *",
+    [id, body],
+  );
+  if (rows[0]) await addEvent(id, "edited", `${body.length} characters`);
+  return rows[0] ?? null;
+}
+
+export interface ItemEvent {
+  id: number;
+  action: string;
+  detail: string | null;
+  at: Date;
+}
+
+export async function getEvents(itemId: string, limit = 50): Promise<ItemEvent[]> {
+  const { rows } = await pool.query<ItemEvent>(
+    "SELECT id, action, detail, at FROM merrit_event WHERE item_id = $1 ORDER BY id DESC LIMIT $2",
+    [itemId, limit],
+  );
+  return rows;
+}
+
+export async function clientCounts(): Promise<Record<string, Record<string, number>>> {
+  const { rows } = await pool.query<{ client: string; status: string; count: string }>(
+    "SELECT client, status, count(*)::text AS count FROM merrit_approval_item GROUP BY client, status",
+  );
+  const counts: Record<string, Record<string, number>> = {};
+  for (const row of rows) {
+    const slate = counts[row.client] ?? {};
+    slate[row.status] = Number(row.count);
+    counts[row.client] = slate;
+  }
+  return counts;
 }
 
 export async function setStatus(

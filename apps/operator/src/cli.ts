@@ -92,7 +92,7 @@ try {
     }
     case "list": {
       const status = flag("status") as ItemStatus | undefined;
-      const items = await listItems(status);
+      const items = await listItems(status ? { status } : {});
       for (const item of items) {
         console.log(
           `${item.id.slice(0, 8)}  ${item.status.padEnd(9)} ${item.language}  ${item.angle}`,

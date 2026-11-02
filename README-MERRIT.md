@@ -228,6 +228,56 @@ published count exclude it, because a post that was taken down is not a live pos
 pnpm --filter @merrit/operator exec tsx src/cli.ts stats
 ```
 
+## The queue UI, inside the shell
+
+The approval queue lives at **http://127.0.0.1:5173/merrit**, inside the forked shell's web app,
+built from the shell's own primitives (`@rakazo/ui-web` card, badge, button, input, textarea,
+selects, scroll area, skeleton) and its design tokens. No new palette, no second layout system.
+
+- **Left rail:** every brand in the registry with a status dot and its count of drafts waiting on
+  a human.
+- **Center:** the queue. Cards carry channel, language, angle, status chip and timestamp, with
+  status, channel and language filters plus free text search.
+- **Right panel:** the draft. Body is editable, both guards run on the edited text as you type
+  (debounced), approve and reject sit together, reject requires a written reason, and the history
+  of every transition is listed, including `dry_run` and `deleted`.
+- **Top bar:** brand switcher, batch size and generate, above a permanent amber strip that says
+  dry run only. The strip is not decoration: there is no publish control anywhere in this build.
+
+`publish` is not routed over HTTP at all. The operator server answers 404 for it, so the UI cannot
+reach publishing even by hand-crafting a request; the CLI remains the only publish surface. The
+only action in the UI that produces a payload is the dry run, which writes the kit, records the
+item as `dry_run`, and sends nothing.
+
+### Talking to the operator
+
+The web app talks to the operator through a Vite dev proxy, not CORS:
+
+```
+browser -> http://127.0.0.1:5173/merrit-api/... -> http://127.0.0.1:3300/api/...
+```
+
+`apps/web/vite.config.ts` sets that rule, rewritable to any reverse proxy in production. The
+browser stays on one origin, so the operator needs no CORS policy and no second host is baked into
+the client. Override the target with `MERRIT_OPERATOR_URL`.
+
+### Brands
+
+`brand/clients.yaml` lists the brand files. Kōt is the live brand; NŪR Dental Studio and BARQ Auto
+Spa are demo brands that exist to prove the switcher. Adding a client is one registry entry plus
+one YAML file, no code change. Demo brands are marked as such in the file and must not be
+published from until their content is replaced with a real, verified business.
+
+### Screenshots and click-through
+
+```bash
+node apps/web/scripts/merrit-ui-check.mjs          # writes PNGs to .artifacts/merrit-ui/
+```
+
+It drives the real page with Playwright: queue, detail, approve, dry run with the rendered
+payload, reject with a written reason, and a brand switch. Approve and reject run on a demo brand
+so the live Kōt queue is only read. It fails loudly on any console error.
+
 ## Publishing to LinkedIn
 
 Publisher: `apps/operator/src/publish-linkedin.ts`. Official API only, no browser automation,
@@ -331,6 +381,10 @@ ahead, not a claim of coverage.
 - **Billing and credit screens** inherited from upstream render Merrit labels but have no
   payment processor behind them. Merrit v1 is bring-your-own-key. Remove or wire them before
   a customer sees this.
+- **The queue route is unauthenticated.** `/merrit` sits outside the shell's auth and billing
+  gates, because both are out of scope for this build and `SubscriptionGate` would paywall the
+  page. It is local only. Close this before the app is hosted anywhere: it exposes client drafts
+  to anyone who can reach the port.
 - **Desktop and mobile apps** (`apps/desktop`, `apps/mobile`) are not built and still carry
   their own bundled copy. Only the web shell is rebranded.
 - **Sandbox supervisor** logs `connect ENOENT /var/run/docker.sock` because there is no Docker.

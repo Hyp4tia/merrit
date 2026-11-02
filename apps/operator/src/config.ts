@@ -37,6 +37,8 @@ export const config = {
   port: Number(process.env.OPERATOR_PORT ?? 3300),
   databaseUrl: required("DATABASE_URL"),
   brandFile: process.env.MERRIT_BRAND_FILE ?? path.join(repoRoot, "..", "brand", "kot.yaml"),
+  clientsFile:
+    process.env.MERRIT_CLIENTS_FILE ?? path.join(repoRoot, "..", "brand", "clients.yaml"),
   clientSlug: process.env.MERRIT_CLIENT ?? "kot",
   llm: {
     baseUrl: (process.env.MERRIT_LLM_BASE_URL ?? "https://api.commandcode.ai/provider/v1").replace(

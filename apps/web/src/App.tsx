@@ -40,6 +40,7 @@ import { completeSsoCallback, SSO_CALLBACK_PATH } from "./lib/sso-flow";
 import { IntegrationCallbackPage } from "./pages/IntegrationCallback";
 import { IntegrationSetupPage } from "./pages/IntegrationSetup";
 import { McpOAuthCallbackPage } from "./pages/McpOAuthCallback";
+import { MerritPage } from "./pages/merrit/merrit-page";
 import { ShellPage } from "./pages/Shell";
 import { SlackInstallCallbackPage } from "./pages/SlackInstallCallback";
 
@@ -281,6 +282,8 @@ function SessionApp() {
                 <Route path="/app/x/:linkId" element={<NavLinkPage />} />
                 <Route path="/app/:botId" element={<ShellPage />} />
               </Route>
+              {/* Inside the shell's look, outside its auth and billing gates. See merrit-page.tsx. */}
+              <Route path="/merrit" element={<MerritPage />} />
               <Route path="*" element={<NotFoundPage />} />
             </Routes>
           </Suspense>

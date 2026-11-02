@@ -474,7 +474,19 @@ export default defineConfig(({ command, mode }) => {
   // Set by the server built from this config; reusing one config object for two servers would
   // leave the last one's list.
   let proxyHosts: readonly string[] | true = [];
-  const proxy = apiProxy(api, () => proxyHosts);
+  // The Merrit operator is a separate service with its own JSON API. Proxying it under this
+  // origin keeps the browser on one origin: no CORS policy on the operator, no second host in
+  // the client, and the same rule works in production behind any reverse proxy.
+  const merritApi =
+    process.env.MERRIT_OPERATOR_URL ?? rootEnv.MERRIT_OPERATOR_URL ?? "http://127.0.0.1:3300";
+  const proxy = {
+    ...apiProxy(api, () => proxyHosts),
+    "/merrit-api": {
+      target: merritApi,
+      changeOrigin: true,
+      rewrite: (path: string) => path.replace(/^\/merrit-api/, "/api"),
+    },
+  };
   const screenProxySecret = () =>
     resolveScreenProxySecret({
       ...process.env,
