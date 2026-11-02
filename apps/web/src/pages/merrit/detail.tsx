@@ -1,18 +1,27 @@
-import { Button, Input, ScrollArea, Separator, Textarea } from "@rakazo/ui-web";
+import { Badge, Button, Disclosure, Input, ScrollArea, Separator, Textarea } from "@rakazo/ui-web";
 import { useMutation } from "@tanstack/react-query";
-import { AlertTriangle, Check, History, PlayCircle, X } from "lucide-react";
+import { AlertTriangle, Check, History, Pencil, PlayCircle, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { formatRelativeTime } from "../../lib/relative-time";
 import type { ApprovalItem, DryRunPayload, ItemEvent, Violation } from "./api";
 import { merritApi } from "./api";
-import { CHANNEL_LABEL, canDryRun, canEdit, cx, LanguageChip, StatusChip } from "./status";
+import {
+  ChannelLabel,
+  canDryRun,
+  canEdit,
+  cx,
+  draftLabel,
+  LanguageTag,
+  StatusPill,
+} from "./status";
 
 interface DetailProps {
   item: ApprovalItem | null;
   events: ItemEvent[];
+  number: number | undefined;
   loading: boolean;
   onChanged: () => void;
-  /** The account the dry run would resolve. Permission decides availability, not connectivity. */
+  /** The account a test send would resolve. Permission decides availability, not connectivity. */
   account: {
     id: string;
     label: string;
@@ -21,9 +30,11 @@ interface DetailProps {
     memberUrn: string;
     reason: string;
   } | null;
+  rejectOpen: boolean;
+  onRejectOpen: (open: boolean) => void;
 }
 
-function ViolationList({
+function GuardList({
   title,
   tone,
   violations,
@@ -36,7 +47,7 @@ function ViolationList({
   return (
     <div
       className={cx(
-        "rounded-md border px-3 py-2 text-xs",
+        "rounded-md border px-3 py-2 text-merrit-caption",
         tone === "warning"
           ? "border-warning/40 bg-warning/10 text-warning"
           : "border-destructive/40 bg-destructive/10 text-destructive",
@@ -44,12 +55,12 @@ function ViolationList({
     >
       <p className="flex items-center gap-1.5 font-medium">
         <AlertTriangle className="size-3.5" />
-        {title} ({violations.length})
+        {title}
       </p>
-      <ul className="mt-1 space-y-0.5 pl-5">
+      <ul className="mt-1 space-y-0.5 pl-4">
         {violations.map((violation) => (
           <li key={`${violation.rule}:${violation.detail}`} className="list-disc">
-            <span className="font-medium">{violation.rule}</span>: {violation.detail}
+            {violation.detail}
           </li>
         ))}
       </ul>
@@ -57,15 +68,25 @@ function ViolationList({
   );
 }
 
-/** Right panel: the draft, the guards, the two human decisions, and a dry run. */
-export function ItemDetail({ item, events, loading, onChanged, account }: DetailProps) {
+/** Right panel: the draft as it will be read, the guards, the decision, and a test send. */
+export function ItemDetail({
+  item,
+  events,
+  number,
+  loading,
+  onChanged,
+  account,
+  rejectOpen,
+  onRejectOpen,
+}: DetailProps) {
   const [draft, setDraft] = useState(item?.body ?? "");
   const [reason, setReason] = useState("");
   const [payload, setPayload] = useState<DryRunPayload | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [mode, setMode] = useState<"preview" | "edit">("preview");
   const [brandViolations, setBrandViolations] = useState<Violation[]>([]);
   const [commercialViolations, setCommercialViolations] = useState<Violation[]>([]);
-  const payloadRef = useRef<HTMLDivElement | null>(null);
+  const reasonRef = useRef<HTMLInputElement | null>(null);
 
   const itemId = item?.id ?? null;
   const client = item?.client ?? "";
@@ -78,13 +99,18 @@ export function ItemDetail({ item, events, loading, onChanged, account }: Detail
     setDraft(item?.body ?? "");
   }, [item?.id, item?.body]);
 
-  // Notices and payloads belong to one draft and one visit, so they clear only when the
-  // selection changes, not when a mutation refetches the item.
+  // Notices and previews belong to one draft and one visit, so they clear only when the selection
+  // changes, not when a mutation refetches the item.
   useEffect(() => {
     setReason("");
     setPayload(null);
     setNotice(null);
+    setMode("preview");
   }, [item?.id]);
+
+  useEffect(() => {
+    if (rejectOpen && typeof reasonRef.current?.focus === "function") reasonRef.current.focus();
+  }, [rejectOpen]);
 
   // Guards run on the text as it is being edited, not only at generation time, so a manual edit
   // cannot quietly introduce a banned phrase or an invented price.
@@ -112,7 +138,7 @@ export function ItemDetail({ item, events, loading, onChanged, account }: Detail
   const approve = useMutation({
     mutationFn: (id: string) => merritApi.approve(id),
     onSuccess: () => {
-      setNotice("Approved. Publishing stays disabled in this build; the next step is a dry run.");
+      setNotice("Approved. Nothing sends in beta; the next step is a test send.");
       onChanged();
     },
     onError: (error: Error) => setNotice(error.message),
@@ -123,9 +149,10 @@ export function ItemDetail({ item, events, loading, onChanged, account }: Detail
     onSuccess: (result) => {
       setNotice(
         result.replacement
-          ? "Rejected, and a replacement draft was written from that reason."
-          : `Rejected. ${result.error ?? ""}`,
+          ? "Sent back, and a new draft was written from that reason."
+          : `Sent back. ${result.error ?? ""}`,
       );
+      onRejectOpen(false);
       onChanged();
     },
     onError: (error: Error) => setNotice(error.message),
@@ -135,6 +162,7 @@ export function ItemDetail({ item, events, loading, onChanged, account }: Detail
     mutationFn: (input: { id: string; body: string }) => merritApi.saveBody(input.id, input.body),
     onSuccess: () => {
       setNotice("Saved.");
+      setMode("preview");
       onChanged();
     },
     onError: (error: Error) => setNotice(error.message),
@@ -144,16 +172,8 @@ export function ItemDetail({ item, events, loading, onChanged, account }: Detail
     mutationFn: (id: string) => merritApi.dryRun(id, account?.id ?? ""),
     onSuccess: (result) => {
       setPayload(result.payload);
-      setNotice("Dry run complete. Nothing was sent to LinkedIn.");
+      setNotice("Test send ready. Nothing was sent to LinkedIn.");
       onChanged();
-      // The payload is the point of the action, so bring it into view instead of leaving it
-      // under a long body editor.
-      requestAnimationFrame(() => {
-        const node = payloadRef.current;
-        // jsdom has no scrollIntoView, and a missing scroll is not worth failing a render over.
-        if (node && typeof node.scrollIntoView === "function")
-          node.scrollIntoView({ block: "nearest" });
-      });
     },
     onError: (error: Error) => setNotice(error.message),
   });
@@ -162,10 +182,10 @@ export function ItemDetail({ item, events, loading, onChanged, account }: Detail
     return (
       <aside
         aria-label="Draft detail"
-        className="flex w-[440px] shrink-0 items-center justify-center border-l border-border bg-card p-6"
+        className="hidden w-full shrink-0 items-center justify-center border-l border-border bg-card p-6 md:flex md:w-[520px]"
       >
-        <p className="text-sm text-muted-foreground">
-          {loading ? "Loading draft…" : "Select a draft to review it."}
+        <p className="text-merrit-secondary text-muted-foreground">
+          {loading ? "Loading draft…" : "Pick a draft to review it."}
         </p>
       </aside>
     );
@@ -173,203 +193,187 @@ export function ItemDetail({ item, events, loading, onChanged, account }: Detail
 
   const dirty = draft.trim() !== item.body.trim();
   const busy = approve.isPending || reject.isPending || save.isPending || dryRun.isPending;
+  const blockedCopy =
+    account?.permission !== "granted"
+      ? (account?.reason ?? "No account in this brand may post.")
+      : !account.connected
+        ? `${account.label} is not connected.`
+        : null;
 
   return (
     <aside
       aria-label="Draft detail"
-      className="flex w-[440px] shrink-0 flex-col border-l border-border bg-card"
+      className="flex min-h-0 w-full shrink-0 flex-col border-l border-border bg-card md:w-[520px]"
     >
-      <div className="flex items-start gap-2 border-b border-border px-4 py-3">
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium">{item.angle}</p>
-          <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-            <LanguageChip language={item.language} />
-            <span>{CHANNEL_LABEL[item.channel] ?? item.channel}</span>
+      <div className="shrink-0 border-b border-border px-4 py-3">
+        <div className="flex items-center gap-2">
+          <span className="text-merrit-footnote text-faint-foreground">{draftLabel(number)}</span>
+          <StatusPill status={item.status} />
+          <span className="ml-auto flex items-center gap-1.5 text-merrit-footnote text-muted-foreground">
+            <ChannelLabel channel={item.channel} />
+            <span>·</span>
+            <LanguageTag language={item.language} />
             <span>·</span>
             <span>{formatRelativeTime(item.created_at)}</span>
-          </p>
+          </span>
         </div>
-        <StatusChip status={item.status} />
+        <h2
+          dir="auto"
+          className="mt-1 line-clamp-2 text-merrit-headline font-semibold tracking-tight"
+        >
+          {item.angle}
+        </h2>
       </div>
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="space-y-3 p-4">
           {item.review_reason ? (
-            <div className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
-              Flagged for review: {item.review_reason}
-            </div>
+            <p className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-merrit-caption text-warning">
+              Needs a look: {item.review_reason}
+            </p>
           ) : null}
 
-          <Textarea
-            aria-label="Draft body"
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            dir={item.language === "ar" ? "rtl" : "ltr"}
-            readOnly={!canEdit(item.status)}
-            className="min-h-56 text-sm leading-relaxed"
-          />
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground tabular-nums">
-              {draft.trim().length} characters
-            </span>
-            <span className="ml-auto flex gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={!dirty || busy}
-                onClick={() => setDraft(item.body)}
-              >
-                Revert
-              </Button>
-              <Button
-                size="sm"
-                disabled={!dirty || busy || !canEdit(item.status)}
-                onClick={() => save.mutate({ id: item.id, body: draft })}
-              >
-                Save draft
-              </Button>
-            </span>
-          </div>
-
-          <Separator />
-
-          <ViolationList
-            title="Brand rule warnings"
-            tone="destructive"
-            violations={brandViolations}
-          />
-          <ViolationList
-            title="Commercial guard warnings"
+          {/* Warnings sit above the text, so the owner reads them before the draft. */}
+          <GuardList title="Brand rules" tone="destructive" violations={brandViolations} />
+          <GuardList
+            title="Price and promise guard"
             tone="warning"
             violations={commercialViolations}
           />
-          {brandViolations.length === 0 && commercialViolations.length === 0 ? (
-            <p className="text-xs text-muted-foreground">
-              Both guards pass on this text. Nothing invented, nothing banned.
-            </p>
-          ) : null}
 
-          <Separator />
-
-          <div className="space-y-2">
-            {item.status === "pending" ? (
-              <>
-                <div className="flex gap-2">
-                  <Button
-                    size="sm"
-                    className="flex-1"
-                    disabled={busy}
-                    onClick={() => approve.mutate(item.id)}
-                  >
-                    <Check className="size-3.5" />
-                    Approve
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="flex-1 border-destructive/40 text-destructive hover:bg-destructive/10"
-                    disabled={busy || reason.trim().length < 3}
-                    onClick={() => reject.mutate({ id: item.id, reason: reason.trim() })}
-                  >
-                    <X className="size-3.5" />
-                    Reject
-                  </Button>
-                </div>
-                <Input
-                  aria-label="Rejection reason"
-                  placeholder="Reason for rejection, required, drives the rewrite"
-                  value={reason}
-                  onChange={(event) => setReason(event.target.value)}
-                  className="h-8 text-xs"
-                />
-              </>
-            ) : null}
-
+          <div className="flex items-center gap-1">
             <Button
-              size="sm"
-              variant="secondary"
-              className="w-full"
-              disabled={busy || !canDryRun(item.status) || account?.permission !== "granted"}
-              title={
-                account?.permission !== "granted"
-                  ? (account?.reason ?? "No account in this brand may post.")
-                  : canDryRun(item.status)
-                    ? "Show the exact payload without sending it"
-                    : "Approve the draft before rehearsing a publish"
-              }
-              onClick={() => dryRun.mutate(item.id)}
+              size="xs"
+              variant={mode === "preview" ? "secondary" : "ghost"}
+              onClick={() => setMode("preview")}
             >
-              <PlayCircle className="size-3.5" />
-              Dry run, show payload
+              Preview
             </Button>
-            <p className="text-xs text-faint-foreground">
-              {account?.permission !== "granted"
-                ? (account?.reason ?? "No account in this brand may post.")
-                : account.connected || account.memberUrn
-                  ? `Publishing is disabled in this build. A dry run names ${account.label} as the author and never contacts LinkedIn.`
-                  : `A dry run will show the exact payload with the author unresolved: ${account.reason}`}
-            </p>
+            <Button
+              size="xs"
+              variant={mode === "edit" ? "secondary" : "ghost"}
+              disabled={!canEdit(item.status)}
+              onClick={() => setMode("edit")}
+            >
+              <Pencil className="size-3" />
+              Edit
+            </Button>
+            <span className="ml-auto text-merrit-footnote text-faint-foreground tabular-nums">
+              {draft.trim().length} characters
+            </span>
           </div>
 
-          {payload ? (
-            <div
-              ref={payloadRef}
-              className="rounded-md border border-warning/40 bg-warning/10 p-3 text-xs"
-            >
-              <p className="font-medium text-warning">Payload that would be sent</p>
-              <dl className="mt-2 space-y-1 text-muted-foreground">
-                <div className="flex gap-2">
-                  <dt className="w-20 shrink-0">POST to</dt>
-                  <dd className="break-all font-mono">{payload.wouldPostTo}</dd>
-                </div>
-                <div className="flex gap-2">
-                  <dt className="w-20 shrink-0">account</dt>
-                  <dd>
-                    {payload.accountLabel} ({payload.accountId})
-                  </dd>
-                </div>
-                <div className="flex gap-2">
-                  <dt className="w-20 shrink-0">author</dt>
-                  <dd className="break-all font-mono">{payload.authorUrn}</dd>
-                </div>
-                <div className="flex gap-2">
-                  <dt className="w-20 shrink-0">channel</dt>
-                  <dd>
-                    {CHANNEL_LABEL[payload.channel] ?? payload.channel} ({payload.language})
-                  </dd>
-                </div>
-                <div className="flex gap-2">
-                  <dt className="w-20 shrink-0">kit</dt>
-                  <dd className="break-all font-mono">{payload.kitPath}</dd>
-                </div>
-              </dl>
-              <pre className="mt-2 max-h-40 overflow-auto rounded bg-background/60 p-2 font-sans whitespace-pre-wrap">
-                {payload.body}
-              </pre>
+          {mode === "preview" ? (
+            <div className="rounded-lg border border-border bg-background">
+              <div className="flex items-center gap-2 px-3 pt-3">
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-accent text-merrit-footnote font-semibold">
+                  {item.client.slice(0, 2).toUpperCase()}
+                </span>
+                <span className="min-w-0">
+                  <span className="block truncate text-merrit-caption font-medium">
+                    {account?.label ?? item.client}
+                  </span>
+                  <span className="block text-merrit-footnote text-muted-foreground">now</span>
+                </span>
+                <Badge variant="outline" className="ml-auto text-merrit-footnote">
+                  LinkedIn
+                </Badge>
+              </div>
+              <p
+                dir={item.language === "ar" ? "rtl" : "ltr"}
+                className="line-clamp-[3] px-3 pt-2 pb-1 text-merrit-body whitespace-pre-wrap"
+              >
+                {draft}
+              </p>
+              <p className="px-3 pb-2 text-merrit-caption text-muted-foreground">…see more</p>
             </div>
-          ) : null}
+          ) : (
+            <>
+              <Textarea
+                aria-label="Draft body"
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+                dir={item.language === "ar" ? "rtl" : "ltr"}
+                readOnly={!canEdit(item.status)}
+                className="min-h-64 text-merrit-body leading-relaxed"
+              />
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={!dirty}
+                  onClick={() => setDraft(item.body)}
+                >
+                  Revert
+                </Button>
+                <Button
+                  size="sm"
+                  className="ml-auto"
+                  disabled={!dirty || busy || !canEdit(item.status)}
+                  onClick={() => save.mutate({ id: item.id, body: draft })}
+                >
+                  Save changes
+                </Button>
+              </div>
+            </>
+          )}
 
-          {notice ? (
-            <p className="rounded-md border border-border bg-muted px-3 py-2 text-xs text-muted-foreground">
-              {notice}
-            </p>
-          ) : null}
+          <Disclosure summary={<span className="text-merrit-caption">Test send</span>}>
+            <div className="mt-2 space-y-2">
+              <p className="text-merrit-caption text-muted-foreground">
+                Shows exactly what would be sent and to whom. Nothing leaves the machine.
+              </p>
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={busy || !canDryRun(item.status) || account?.permission !== "granted"}
+                onClick={() => dryRun.mutate(item.id)}
+              >
+                <PlayCircle className="size-3.5" />
+                Show the preview
+              </Button>
+              {!canDryRun(item.status) ? (
+                <p className="text-merrit-footnote text-faint-foreground">
+                  Approve the draft first.
+                </p>
+              ) : null}
 
-          <Separator />
+              {payload ? (
+                <div className="rounded-md border border-status-working/40 bg-status-working/10 p-3">
+                  <p className="text-merrit-caption font-medium text-status-working">
+                    What would be sent
+                  </p>
+                  <dl className="mt-2 space-y-1 text-merrit-footnote text-muted-foreground">
+                    <div className="flex gap-2">
+                      <dt className="w-16 shrink-0">To</dt>
+                      <dd className="break-all font-mono">{payload.wouldPostTo}</dd>
+                    </div>
+                    <div className="flex gap-2">
+                      <dt className="w-16 shrink-0">Account</dt>
+                      <dd>{payload.accountLabel}</dd>
+                    </div>
+                    <div className="flex gap-2">
+                      <dt className="w-16 shrink-0">Author</dt>
+                      <dd className="break-all font-mono">{payload.authorUrn}</dd>
+                    </div>
+                  </dl>
+                  <pre className="mt-2 max-h-40 overflow-auto rounded bg-background/60 p-2 font-sans text-merrit-footnote whitespace-pre-wrap">
+                    {payload.body}
+                  </pre>
+                </div>
+              ) : null}
+            </div>
+          </Disclosure>
 
-          <div>
-            <p className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-              <History className="size-3.5" />
-              History
-            </p>
+          <Disclosure summary={<span className="text-merrit-caption">History</span>}>
             <ul className="mt-2 space-y-1.5">
               {events.map((event) => (
-                <li key={event.id} className="flex gap-2 text-xs">
-                  <span className="w-24 shrink-0 text-faint-foreground">
+                <li key={event.id} className="flex gap-2 text-merrit-footnote">
+                  <span className="w-20 shrink-0 text-faint-foreground">
                     {formatRelativeTime(event.at)}
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="font-medium">{event.action}</span>
+                    <span className="font-medium">{event.action.replace(/_/g, " ")}</span>
                     {event.detail ? (
                       <span className="block truncate text-muted-foreground">{event.detail}</span>
                     ) : null}
@@ -377,12 +381,92 @@ export function ItemDetail({ item, events, loading, onChanged, account }: Detail
                 </li>
               ))}
               {events.length === 0 ? (
-                <li className="text-xs text-muted-foreground">No transitions recorded yet.</li>
+                <li className="text-merrit-footnote text-muted-foreground">
+                  Nothing recorded yet.
+                </li>
               ) : null}
             </ul>
-          </div>
+          </Disclosure>
+
+          {notice ? (
+            <p className="rounded-md border border-border bg-muted px-3 py-2 text-merrit-caption text-muted-foreground">
+              {notice}
+            </p>
+          ) : null}
         </div>
       </ScrollArea>
+
+      {/* Sticky: the two decisions never sit below a long draft. */}
+      <div className="shrink-0 border-t border-border bg-card px-4 py-3">
+        {rejectOpen ? (
+          <div className="flex items-center gap-2">
+            <Input
+              ref={reasonRef}
+              aria-label="Why send it back"
+              placeholder="Why send it back? This drives the rewrite."
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              className="h-8 text-merrit-caption"
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              className="border-destructive/40 text-destructive hover:bg-destructive/10"
+              disabled={busy || reason.trim().length < 3}
+              onClick={() => reject.mutate({ id: item.id, reason: reason.trim() })}
+            >
+              Send back
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => onRejectOpen(false)}>
+              Cancel
+            </Button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              disabled={busy || item.status !== "pending"}
+              onClick={() => approve.mutate(item.id)}
+            >
+              <Check className="size-3.5" />
+              Approve
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="border-destructive/40 text-destructive hover:bg-destructive/10"
+              disabled={busy || item.status !== "pending"}
+              onClick={() => onRejectOpen(true)}
+            >
+              <X className="size-3.5" />
+              Send back
+            </Button>
+            <p className="ml-auto flex items-center gap-1 text-merrit-footnote text-faint-foreground">
+              <History className="size-3" />
+              Preview only. Nothing sends in beta.
+            </p>
+          </div>
+        )}
+
+        {blockedCopy ? (
+          <Disclosure
+            summary={
+              <span className="mt-2 block text-merrit-footnote text-warning">{blockedCopy}</span>
+            }
+            summaryClassName="text-merrit-footnote"
+            className="mt-2"
+          >
+            <p className="mt-1 text-merrit-footnote text-muted-foreground">
+              {account?.reason || blockedCopy} Nothing falls back to another account. A test send
+              still names the author and shows the text.
+            </p>
+            <Separator className="my-2" />
+            <p className="text-merrit-footnote text-faint-foreground">
+              Connecting is off during the beta.
+            </p>
+          </Disclosure>
+        ) : null}
+      </div>
     </aside>
   );
 }

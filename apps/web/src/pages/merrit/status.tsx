@@ -1,62 +1,98 @@
-import { Badge } from "@rakazo/ui-web";
-import type { Language, MerritStatus } from "./api";
+import type { MerritStatus } from "./api";
 
 export function cx(...values: Array<string | false | null | undefined>): string {
   return values.filter(Boolean).join(" ");
 }
 
+/** Owner language, not system language: nobody outside the engine says "dry_run". */
 export const STATUS_LABEL: Record<MerritStatus, string> = {
-  pending: "Pending",
+  pending: "Waiting for you",
   approved: "Approved",
   rejected: "Rejected",
   scheduled: "Scheduled",
   published: "Published",
-  manual: "Manual",
-  dry_run: "Dry run",
-  deleted: "Deleted",
+  manual: "Needs a look",
+  dry_run: "Tested",
+  deleted: "Removed",
 };
 
-// Tones reuse the shell's semantic tokens, so the queue matches the rest of the app without a
-// new palette.
-const STATUS_TONE: Record<MerritStatus, string> = {
-  pending: "border-warning/40 bg-warning/10 text-warning",
-  approved: "border-success/40 bg-success/10 text-success",
-  rejected: "border-destructive/40 bg-destructive/10 text-destructive",
-  scheduled: "border-status-working/40 bg-status-working/10 text-status-working",
-  published: "border-link/40 bg-link/10 text-link",
-  manual: "border-border bg-muted text-muted-foreground",
-  dry_run: "border-warning/40 bg-warning/10 text-warning",
-  deleted: "border-border bg-muted text-faint-foreground line-through",
+// Shape carries the state as well as colour: a pill, a square, a dashed outline, a dotted one.
+// Colour alone fails for anyone who cannot separate amber from green at this size.
+const STATUS_SHAPE: Record<MerritStatus, string> = {
+  pending: "rounded-full border-warning/50 bg-warning/10 text-warning",
+  approved: "rounded-md border-success/50 bg-success/10 text-success",
+  rejected: "rounded-md border-dashed border-destructive/50 bg-transparent text-destructive",
+  scheduled: "rounded-full border-status-working/50 bg-status-working/10 text-status-working",
+  published: "rounded-md border-link/50 bg-link/15 text-link",
+  manual: "rounded-full border-dotted border-warning/60 bg-transparent text-warning",
+  dry_run:
+    "rounded-sm border-dotted border-status-working/60 bg-status-working/10 text-status-working",
+  deleted: "rounded-md border-border bg-muted text-faint-foreground line-through",
 };
 
-export function StatusChip({ status }: { status: MerritStatus }) {
+export function StatusPill({ status, className }: { status: MerritStatus; className?: string }) {
   return (
-    <Badge variant="outline" className={cx("font-medium", STATUS_TONE[status])}>
+    <span
+      className={cx(
+        "inline-flex h-6 shrink-0 items-center border px-2 text-merrit-footnote font-medium whitespace-nowrap",
+        STATUS_SHAPE[status],
+        className,
+      )}
+      data-status={status}
+    >
       {STATUS_LABEL[status]}
-    </Badge>
+    </span>
   );
 }
 
 export const CHANNEL_LABEL: Record<string, string> = {
-  linkedin_personal: "LinkedIn, personal",
-  linkedin_company: "LinkedIn, page",
+  linkedin_personal: "LinkedIn",
+  linkedin_company: "LinkedIn page",
   instagram: "Instagram",
   x: "X",
 };
 
-export function LanguageChip({ language }: { language: Language }) {
+export function ChannelLabel({ channel }: { channel: string }) {
+  return <span>{CHANNEL_LABEL[channel] ?? channel}</span>;
+}
+
+export function LanguageTag({ language }: { language: "en" | "ar" }) {
   return (
-    <Badge variant="secondary" className="uppercase">
-      {language}
-    </Badge>
+    <span className="text-merrit-caption text-muted-foreground uppercase">
+      {language === "ar" ? "Arabic" : "English"}
+    </span>
   );
 }
 
-/** Only these statuses can produce a payload, and only through a dry run. */
+/** Only these statuses can produce a preview payload, and only through a test send. */
 export function canDryRun(status: MerritStatus): boolean {
   return status === "approved" || status === "scheduled" || status === "manual";
 }
 
 export function canEdit(status: MerritStatus): boolean {
   return status !== "published" && status !== "deleted";
+}
+
+/** A draft reads as "Draft #12", which is what a person would call it. */
+export function draftLabel(index: number | undefined): string {
+  return index === undefined ? "Draft" : `Draft #${index}`;
+}
+
+export function ConnectionDot({
+  connected,
+  className,
+}: {
+  connected: boolean;
+  className?: string;
+}) {
+  return (
+    <span
+      aria-hidden
+      className={cx(
+        "size-2 shrink-0 rounded-full",
+        connected ? "bg-success" : "bg-destructive",
+        className,
+      )}
+    />
+  );
 }

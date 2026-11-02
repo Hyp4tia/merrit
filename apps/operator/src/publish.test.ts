@@ -224,7 +224,7 @@ describe("with no token in the store", () => {
   it("still fails closed on a real publish, before any network call", async () => {
     const error = await actions.publishApproved(ID).catch((caught: unknown) => caught);
     expect(String(error)).toMatch(/Personal is not connected/);
-    expect(String(error)).toMatch(/No LinkedIn token on file/);
+    expect(String(error)).toMatch(/Not connected/);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 

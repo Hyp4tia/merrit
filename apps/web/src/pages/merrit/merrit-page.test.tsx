@@ -59,6 +59,19 @@ vi.mock("@rakazo/ui-web", async (importOriginal) => {
     ScrollArea: Passthrough,
     Separator: () => <hr />,
     Skeleton: () => <div />,
+    // Base UI primitives are not worth rendering in jsdom: the popover content is asserted through
+    // the trigger, and the disclosure content is always rendered.
+    Popover: Passthrough,
+    PopoverTrigger: ({ children, ...props }: ComponentProps<"button">) => (
+      <button {...props}>{children}</button>
+    ),
+    PopoverContent: Passthrough,
+    Disclosure: ({ summary, children }: { summary: ReactNode; children?: ReactNode }) => (
+      <div>
+        {summary}
+        {children}
+      </div>
+    ),
     buttonVariants: (await importOriginal<typeof UiWeb>()).buttonVariants,
   };
 });
@@ -66,62 +79,73 @@ vi.mock("@rakazo/ui-web", async (importOriginal) => {
 const { MerritPage } = await import("./merrit-page");
 
 const ITEM_ID = "11111111-1111-1111-1111-111111111111";
+const SECOND_ID = "22222222-2222-2222-2222-222222222222";
+const THIRD_ID = "33333333-3333-3333-3333-333333333333";
+const DELEGATION_ID = "44444444-4444-4444-4444-444444444444";
+
+const LONG_BODY =
+  "The objection is plain: someone quoted less than 12000 EGP for a site, so why pay ours. " +
+  "12000 EGP is our build floor. 6000 to start, 6000 at launch, or 10000 paid in full. " +
+  "That covers pages that load on a 3G phone, a booking flow a receptionist can run, and a form " +
+  "that delivers mail instead of quietly failing.";
 
 // Permission comes from the registry, connectivity from the server. Personal is permitted but has
-// no token in this build, which is exactly the state the UI has to render honestly.
+// no token in this beta, which is exactly the state the UI has to render honestly.
 const PERSON = {
   id: "kot-personal",
   label: "Personal",
   kind: "person" as const,
   permission: "granted" as const,
   member_urn: "urn:li:person:TESTURN",
-  note: "",
+  note: "The founder profile.",
   connected: false,
-  reason: "No LinkedIn token on file. Authorize the account before it can post.",
+  reason: "Not connected. Authorize this account before it can post.",
 };
+
 const PAGE = {
   id: "kot-page",
   label: "Kōt page",
   kind: "organization" as const,
   permission: "blocked" as const,
   member_urn: "",
-  note: "",
+  note: "Page posting needs approval.",
   connected: false,
-  reason:
-    "Page posting needs LinkedIn Community Management API approval, which this build does not have.",
+  reason: "Page posting needs Community Management API approval, which this beta does not have.",
 };
+
+const LEAD = {
+  id: "kot-lead",
+  name: "Kōt lead",
+  role: "lead",
+  active: true,
+  description: "Routes the request and reports the outcome. Never writes the post.",
+};
+
+const COPY = {
+  id: "kot-copywriter",
+  name: "Kōt copywriter",
+  role: "copywriter",
+  active: true,
+  description: "Drafts and revises posts from the brand file.",
+};
+
+const INACTIVE = ["kot-strategist", "kot-designer", "kot-ads"].map((id) => ({
+  id,
+  name: id.replace("kot-", "Kōt "),
+  role: id.replace("kot-", ""),
+  active: false,
+  description: "Coming soon.",
+}));
 
 const client = {
   slug: "kot",
   name: "Kōt Dynamics",
   file: "/b/kot.yaml",
   note: "Live brand.",
-  counts: { pending: 1 },
-  needsReview: 1,
+  counts: { pending: 2 },
+  needsReview: 2,
   accounts: [PERSON, PAGE],
-  bots: [
-    {
-      id: "kot-lead",
-      name: "Kōt lead",
-      role: "lead",
-      active: true,
-      description: "Routes the request and reports the outcome. Never writes the post.",
-    },
-    {
-      id: "kot-copywriter",
-      name: "Kōt copywriter",
-      role: "copywriter",
-      active: true,
-      description: "Drafts and revises posts from the brand file.",
-    },
-    {
-      id: "kot-strategist",
-      name: "Kōt strategist",
-      role: "strategist",
-      active: false,
-      description: "Ideas, angles and calendar. Not active in this build.",
-    },
-  ],
+  bots: [LEAD, COPY, ...INACTIVE],
 };
 
 function item(overrides: Record<string, unknown> = {}) {
@@ -131,8 +155,8 @@ function item(overrides: Record<string, unknown> = {}) {
     channel: "linkedin_personal",
     language: "en" as const,
     angle: "A cheap site is a deferred bill",
-    body: "A cheap site is not a cheaper site. It is a deferred bill, paid in pieces.",
-    status: "approved",
+    body: LONG_BODY,
+    status: "pending",
     reject_reason: null,
     review_reason: null,
     model: "stub",
@@ -142,11 +166,26 @@ function item(overrides: Record<string, unknown> = {}) {
     platform_post_id: null,
     published_at: null,
     kit_path: null,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
+    created_at: "2026-11-02T18:00:00.000Z",
+    updated_at: "2026-11-02T18:00:00.000Z",
     ...overrides,
   };
 }
+
+const ITEMS = [
+  item(),
+  item({
+    id: SECOND_ID,
+    angle: "The booking log is the asset",
+    status: "approved",
+    created_at: "2026-11-02T18:10:00.000Z",
+  }),
+  item({
+    id: THIRD_ID,
+    angle: "Pricing is not the objection",
+    created_at: "2026-11-02T18:20:00.000Z",
+  }),
+];
 
 async function flush(times = 6) {
   for (let index = 0; index < times; index += 1) {
@@ -164,7 +203,7 @@ async function renderPage() {
   await act(async () => {
     root.render(
       <QueryClientProvider client={queryClient}>
-        <MemoryRouter>
+        <MemoryRouter initialEntries={["/merrit"]}>
           <MerritPage />
         </MemoryRouter>
       </QueryClientProvider>,
@@ -174,370 +213,300 @@ async function renderPage() {
   return container;
 }
 
+// Sidebar buttons carry an avatar, a name and a counter, so matching is by contained text rather
+// than exact equality. The shortest match wins when a label appears twice in one scope.
 function buttonByText(container: HTMLElement, text: string): HTMLButtonElement {
-  const match = Array.from(container.querySelectorAll("button")).find((button) =>
-    (button.textContent ?? "").includes(text),
-  );
-  if (!match) throw new Error(`No button containing "${text}"`);
-  return match;
+  const matches = Array.from(container.querySelectorAll("button"))
+    .filter((button) => (button.textContent ?? "").includes(text))
+    .sort((left, right) => (left.textContent ?? "").length - (right.textContent ?? "").length);
+  const found = matches[0];
+  if (!found) throw new Error(`No button with text "${text}"`);
+  return found as HTMLButtonElement;
 }
 
-function selectByLabel(container: HTMLElement, label: string): HTMLSelectElement {
-  const match = container.querySelector(`select[aria-label="${label}"]`);
-  if (!match) throw new Error(`No select labelled "${label}"`);
-  return match as HTMLSelectElement;
+function click(node: HTMLElement) {
+  node.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 }
 
-function choose(select: HTMLSelectElement, value: string) {
-  const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
-  setter?.call(select, value);
-  select.dispatchEvent(new Event("change", { bubbles: true }));
+function press(key: string) {
+  window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
 }
 
 beforeEach(() => {
-  document.body.replaceChildren();
-  vi.clearAllMocks();
+  for (const spy of Object.values(api)) spy.mockReset?.();
   api.clients.mockResolvedValue([client]);
-  api.items.mockResolvedValue([item()]);
-  api.item.mockResolvedValue({
-    item: item(),
-    events: [{ id: 1, action: "created", detail: "angle", at: new Date().toISOString() }],
-  });
+  api.items.mockResolvedValue(ITEMS);
+  api.item.mockImplementation((id: string) =>
+    Promise.resolve({ item: ITEMS.find((entry) => entry.id === id) ?? ITEMS[0], events: [] }),
+  );
   api.check.mockResolvedValue({ brandViolations: [], commercialViolations: [] });
-  api.threads.mockResolvedValue(
-    client.bots.map((bot) => ({
-      threadId: bot.active ? `thread-${bot.id}` : null,
+  api.approve.mockResolvedValue({ ok: true });
+  api.reject.mockResolvedValue({ ok: true, replacement: null });
+  api.saveBody.mockResolvedValue({ ok: true });
+  api.dryRun.mockResolvedValue({ payload: null, kit: null });
+  api.postMessage.mockResolvedValue({
+    reply: "On it.",
+    messages: [],
+    delegation: null,
+    itemId: null,
+  });
+
+  api.threads.mockResolvedValue([
+    { threadId: "thread-lead", bot: LEAD, messageCount: 2, lastMessageAt: null },
+    { threadId: "thread-copy", bot: COPY, messageCount: 5, lastMessageAt: null },
+    ...INACTIVE.map((bot) => ({
+      threadId: null,
       bot,
       messageCount: 0,
       lastMessageAt: null,
     })),
-  );
-  api.thread.mockImplementation((_: string, botId: string) =>
-    Promise.resolve({
-      threadId: `thread-${botId}`,
-      bot: client.bots.find((entry) => entry.id === botId),
-      messages: [],
-      delegations: [],
-    }),
-  );
-});
+  ]);
 
-describe("Merrit home", () => {
-  it("is a chat: bot roster on the left, conversation in the centre", async () => {
-    const container = await renderPage();
-    expect(container.textContent).toContain("Kōt lead");
-    expect(container.textContent).toContain("Routes the request and reports the outcome");
-    expect(container.textContent).toContain("Kōt copywriter");
-    // Declared but not built: listed, disabled, and labelled, never hidden or silently routable.
-    expect(container.textContent).toContain("Kōt strategist");
-    expect(container.textContent).toContain("inactive");
-    const strategist = Array.from(container.querySelectorAll("button")).find((button) =>
-      (button.textContent ?? "").includes("Kōt strategist"),
-    );
-    expect(strategist?.disabled).toBe(true);
-    expect(container.textContent).toContain("Review queue");
-    expect(container.querySelector('textarea[aria-label="Message the bot"]')).not.toBeNull();
-  });
-
-  it("shows the brand and the account, with the disconnected page account visible", async () => {
-    const container = await renderPage();
-    expect(selectByLabel(container, "Brand").value).toBe("kot");
-
-    const accounts = selectByLabel(container, "Account");
-    // Connectivity is derived at runtime, so both read as not connected while no token exists,
-    // even though Personal is permitted to post once authorized.
-    const labels = Array.from(accounts.options).map((option) => option.textContent);
-    expect(labels).toEqual(["Personal · not connected", "Kōt page · not connected"]);
-    expect(accounts.value).toBe("kot-personal");
-  });
-
-  it("makes the disconnected state obvious and refuses to imply it can post", async () => {
-    const container = await renderPage();
-    await act(async () => {
-      choose(selectByLabel(container, "Account"), "kot-page");
-    });
-    await flush();
-
-    expect(container.textContent).toContain("Kōt page is not connected");
-    expect(container.textContent).toContain("Community Management API approval");
-    expect(container.textContent).toContain("nothing");
-    expect(container.textContent).toContain("will fall back to another account");
-  });
-
-  it("sends a message to the bot for the selected account", async () => {
-    api.postMessage.mockResolvedValue({
-      reply: "Sent that to the copywriter.",
-      messages: [],
-      delegation: null,
-      itemId: null,
-    });
-    const container = await renderPage();
-
-    await act(async () => {
-      choose(selectByLabel(container, "Account"), "kot-page");
-    });
-    await flush();
-
-    const box = container.querySelector(
-      'textarea[aria-label="Message the bot"]',
-    ) as HTMLTextAreaElement;
-    await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
-      setter?.call(box, "Draft two posts about the page");
-      box.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    await flush();
-
-    await act(async () => {
-      buttonByText(container, "Send").dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    await flush();
-
-    expect(api.postMessage).toHaveBeenCalledWith(
-      "kot",
-      "kot-lead",
-      "Draft two posts about the page",
-    );
-  });
-
-  it("shows the delegation in both threads and moves between them", async () => {
+  api.thread.mockImplementation((_: string, botId: string) => {
     const delegation = {
-      id: "delegation-1",
+      id: DELEGATION_ID,
       fromBot: "kot-lead",
       toBot: "kot-copywriter",
-      request: "Draft a post that answers the cheap-site objection",
+      request: "Draft a post that answers the cheap-site objection.",
       itemId: ITEM_ID,
       status: "done",
       at: new Date().toISOString(),
     };
-    api.thread.mockImplementation((_: string, botId: string) =>
-      Promise.resolve({
-        threadId: `thread-${botId}`,
-        bot: client.bots.find((entry) => entry.id === botId),
+    if (botId === "kot-copywriter") {
+      return Promise.resolve({
+        threadId: "thread-copy",
+        bot: COPY,
         messages: [
           {
             id: 1,
-            role: "user" as const,
-            bot: botId,
-            content: "Draft a post that answers the cheap-site objection",
-            itemId: null,
-            delegationId: null,
+            role: "delegation",
+            bot: "kot-copywriter",
+            content: delegation.request,
+            itemId: ITEM_ID,
+            delegationId: DELEGATION_ID,
             at: new Date().toISOString(),
           },
           {
             id: 2,
-            role: "assistant" as const,
-            bot: botId,
-            content:
-              botId === "kot-lead"
-                ? "Sent that to the copywriter. The draft is in the queue as one item."
-                : "The counter at a clinic fills with small promises.",
+            role: "assistant",
+            bot: "kot-copywriter",
+            content: LONG_BODY,
             itemId: ITEM_ID,
-            delegationId: delegation.id,
+            delegationId: DELEGATION_ID,
             at: new Date().toISOString(),
           },
         ],
         delegations: [delegation],
-      }),
-    );
-
-    const container = await renderPage();
-    await flush();
-
-    // Lead thread: the card is there, with the item and the other bot named.
-    expect(container.textContent).toContain("Delegation · Kōt lead to Kōt copywriter");
-    expect(container.textContent).toContain("item 11111111");
-
-    await act(async () => {
-      buttonByText(container, "Open Kōt copywriter").dispatchEvent(
-        new MouseEvent("click", { bubbles: true }),
-      );
+      });
+    }
+    return Promise.resolve({
+      threadId: "thread-lead",
+      bot: LEAD,
+      messages: [
+        {
+          id: 3,
+          role: "user",
+          bot: "kot-lead",
+          content: delegation.request,
+          itemId: null,
+          delegationId: null,
+          at: new Date().toISOString(),
+        },
+        {
+          id: 4,
+          role: "assistant",
+          bot: "kot-lead",
+          content: "Sent that to the copywriter. The draft is with you for review.",
+          itemId: ITEM_ID,
+          delegationId: DELEGATION_ID,
+          at: new Date().toISOString(),
+        },
+      ],
+      delegations: [delegation],
     });
-    await flush();
-
-    // Copywriter thread: same delegation row, same item, and the draft itself.
-    expect(api.thread).toHaveBeenCalledWith("kot", "kot-copywriter");
-    expect(container.textContent).toContain("Delegation · Kōt lead to Kōt copywriter");
-    expect(container.textContent).toContain("The counter at a clinic fills with small promises.");
-  });
-
-  it("offers no publish control anywhere", async () => {
-    const container = await renderPage();
-    const labels = Array.from(container.querySelectorAll("button")).map(
-      (button) => button.textContent ?? "",
-    );
-    expect(labels.some((label) => /publish/i.test(label))).toBe(false);
-    expect(container.textContent).toContain("Publishing is disabled");
   });
 });
 
-describe("Merrit queue surface", () => {
+describe("Merrit home", () => {
+  it("is a chat, and every counter says what it counts", async () => {
+    const container = await renderPage();
+
+    expect(container.textContent).toContain("Kōt lead");
+    expect(container.textContent).toContain("Kōt copywriter");
+    expect(container.textContent).toContain("2 messages");
+    expect(container.textContent).toContain("5 messages");
+
+    // Three bots are declared and not built: one line, not three rows in the primary navigation.
+    expect(container.textContent).toContain("3 more bots, coming soon");
+    expect(container.querySelector('button[aria-label="Message the bot"]')).toBeNull();
+    expect(container.querySelector('textarea[aria-label="Message the bot"]')).not.toBeNull();
+    expect(container.textContent).toContain("Drafts");
+    // The rail counts what needs a decision, and says so, so it cannot be read as the total.
+    expect(container.textContent).toContain("2 waiting");
+  });
+
+  it("keeps one status line for the whole surface", async () => {
+    const container = await renderPage();
+
+    const statuses = container.querySelectorAll('[role="status"]');
+    expect(statuses).toHaveLength(1);
+    expect(statuses[0]?.textContent).toContain("Preview only");
+    expect(statuses[0]?.textContent).toContain("not connected");
+    expect(container.textContent).not.toContain("Dry run only");
+    expect(container.textContent).not.toMatch(/rehearsal/i);
+  });
+
+  it("offers identity as pickers, not form selects", async () => {
+    const container = await renderPage();
+
+    expect(container.querySelector('button[aria-label="Brand"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="Account"]')).not.toBeNull();
+    expect(container.querySelector('select[aria-label="Brand"]')).toBeNull();
+    expect(container.querySelector('select[aria-label="Account"]')).toBeNull();
+    expect(container.querySelector('button[aria-label="Account"]')?.textContent).toContain(
+      "Personal · not connected",
+    );
+  });
+
+  it("shows the draft as a card in the copywriter thread, not as prose", async () => {
+    const container = await renderPage();
+    await act(async () => {
+      click(buttonByText(container, "Kōt copywriter"));
+    });
+    await flush();
+
+    const card = container.querySelector('article[aria-label="Draft"]');
+    expect(card).not.toBeNull();
+    expect(card?.textContent).toContain("Draft #1");
+    expect(card?.textContent).toContain("characters");
+    expect(card?.textContent).toContain("LinkedIn");
+    expect(card?.textContent).toContain("…see more");
+    for (const action of ["Approve", "Edit", "Reject", "Open"]) {
+      expect(buttonByText(container, action)).toBeTruthy();
+    }
+  });
+
+  it("approves a draft from the card without leaving the conversation", async () => {
+    const container = await renderPage();
+    await act(async () => {
+      click(buttonByText(container, "Kōt copywriter"));
+    });
+    await flush();
+
+    const card = container.querySelector('article[aria-label="Draft"]') as HTMLElement;
+    const approveButton = Array.from(card.querySelectorAll("button")).find(
+      (button) => (button.textContent ?? "").trim() === "Approve",
+    ) as HTMLButtonElement;
+
+    await act(async () => {
+      click(approveButton);
+    });
+    await flush();
+
+    expect(api.approve).toHaveBeenCalledWith(ITEM_ID);
+    // Still in the chat: the queue surface never opened.
+    expect(container.querySelector('section[aria-label="Chat with the bot"]')).not.toBeNull();
+    expect(container.querySelector('section[aria-label="Draft queue"]')).toBeNull();
+  });
+
+  it("says nothing in developer language on the primary surface", async () => {
+    const container = await renderPage();
+    const text = container.textContent ?? "";
+
+    expect(text).not.toMatch(/payload/i);
+    expect(text).not.toMatch(/rehearsal/i);
+    expect(text).not.toMatch(/dry run/i);
+    expect(text).not.toMatch(/token on file/i);
+    expect(text).not.toMatch(/this build/i);
+    expect(text).not.toContain(ITEM_ID);
+  });
+
+  it("uses the Merrit type scale rather than 12px utility text", async () => {
+    const container = await renderPage();
+    const title = container.querySelector("h1");
+
+    expect(title?.className).toContain("text-merrit-title");
+    expect(container.querySelector(".text-merrit-secondary")).not.toBeNull();
+    expect(container.querySelector(".text-merrit-footnote")).not.toBeNull();
+  });
+});
+
+describe("Merrit drafts surface", () => {
   async function openQueue() {
     const container = await renderPage();
     await act(async () => {
-      buttonByText(container, "Review queue").dispatchEvent(
-        new MouseEvent("click", { bubbles: true }),
-      );
+      click(buttonByText(container, "Drafts"));
     });
     await flush();
     return container;
   }
 
-  it("stays reachable from the sidebar and shows the queue", async () => {
+  it("selects the first draft that needs a decision, and keeps the decisions in reach", async () => {
     const container = await openQueue();
-    expect(container.textContent).toContain("A cheap site is a deferred bill");
-    expect(api.items).toHaveBeenCalledWith(expect.objectContaining({ client: "kot" }));
+
+    expect(container.querySelector('section[aria-label="Draft queue"]')).not.toBeNull();
+    const detail = container.querySelector('aside[aria-label="Draft detail"]');
+    expect(detail).not.toBeNull();
+    // Work waiting for the owner comes first, newest of those at the top of that group.
+    expect(detail?.textContent).toContain("Pricing is not the objection");
+
+    // The sticky bar: both decisions, always rendered, never below a long body.
+    expect(buttonByText(detail as HTMLElement, "Approve")).toBeTruthy();
+    expect(buttonByText(detail as HTMLElement, "Send back")).toBeTruthy();
   });
 
-  it("opens the detail panel and approves", async () => {
-    // A pending draft, because only pending can be approved.
-    api.items.mockResolvedValue([item({ status: "pending" })]);
-    api.item.mockResolvedValue({
-      item: item({ status: "pending" }),
-      events: [{ id: 1, action: "created", detail: "angle", at: new Date().toISOString() }],
-    });
-    api.approve.mockResolvedValue(item({ status: "approved" }));
+  it("moves with J and K and approves with A", async () => {
     const container = await openQueue();
-    await act(async () => {
-      buttonByText(container, "A cheap site is a deferred bill").dispatchEvent(
-        new MouseEvent("click", { bubbles: true }),
-      );
-    });
-    await flush();
 
     await act(async () => {
-      buttonByText(container, "Approve").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      press("j");
     });
     await flush();
-    expect(api.approve).toHaveBeenCalledWith(ITEM_ID);
-    expect(container.textContent).toContain("Approved. Publishing stays disabled");
-  });
-
-  it("rehearses against the selected account and shows it in the payload", async () => {
-    api.dryRun.mockResolvedValue({
-      kit: "/tmp/kit",
-      item: item({ status: "dry_run" }),
-      payload: {
-        itemId: ITEM_ID,
-        channel: "linkedin_personal",
-        language: "en",
-        body: "body",
-        accountId: "kot-personal",
-        accountLabel: "Personal",
-        authorUrn: "urn:li:person:TEST",
-        kitPath: "/tmp/kit",
-        wouldPostTo: "https://api.linkedin.com/rest/posts",
-      },
-    });
-    const container = await openQueue();
-    await act(async () => {
-      buttonByText(container, "A cheap site is a deferred bill").dispatchEvent(
-        new MouseEvent("click", { bubbles: true }),
-      );
-    });
-    await flush();
-
-    await act(async () => {
-      buttonByText(container, "Dry run, show payload").dispatchEvent(
-        new MouseEvent("click", { bubbles: true }),
-      );
-    });
-    await flush();
-
-    expect(api.dryRun).toHaveBeenCalledWith(ITEM_ID, "kot-personal");
-    expect(container.textContent).toContain("Payload that would be sent");
-    expect(container.textContent).toContain("Personal (kot-personal)");
-  });
-
-  it("disables the rehearsal on a disconnected account instead of falling back", async () => {
-    const container = await renderPage();
-    await act(async () => {
-      choose(selectByLabel(container, "Account"), "kot-page");
-    });
-    await flush();
-    await act(async () => {
-      buttonByText(container, "Review queue").dispatchEvent(
-        new MouseEvent("click", { bubbles: true }),
-      );
-    });
-    await flush();
-    await act(async () => {
-      buttonByText(container, "A cheap site is a deferred bill").dispatchEvent(
-        new MouseEvent("click", { bubbles: true }),
-      );
-    });
-    await flush();
-
-    const dryRun = buttonByText(container, "Dry run, show payload");
-    expect(dryRun.disabled).toBe(true);
-    expect(container.textContent).toContain(
-      "Page posting needs LinkedIn Community Management API approval",
+    expect(container.querySelector('aside[aria-label="Draft detail"]')?.textContent).toContain(
+      "A cheap site is a deferred bill",
     );
-  });
-});
-
-describe("rehearsal without a credential", () => {
-  it("runs on a permitted account and marks the author unresolved", async () => {
-    api.dryRun.mockResolvedValue({
-      kit: "/tmp/kit",
-      item: item({ status: "dry_run" }),
-      payload: {
-        itemId: ITEM_ID,
-        channel: "linkedin_personal",
-        language: "en",
-        body: "body",
-        accountId: "kot-personal",
-        accountLabel: "Personal",
-        authorUrn: "urn:li:person:TESTURN",
-        kitPath: "/tmp/kit",
-        wouldPostTo: "https://api.linkedin.com/rest/posts",
-      },
-    });
-
-    const container = await renderPage();
-    await act(async () => {
-      buttonByText(container, "Review queue").dispatchEvent(
-        new MouseEvent("click", { bubbles: true }),
-      );
-    });
-    await flush();
-    await act(async () => {
-      buttonByText(container, "A cheap site is a deferred bill").dispatchEvent(
-        new MouseEvent("click", { bubbles: true }),
-      );
-    });
-    await flush();
-
-    const dryRun = buttonByText(container, "Dry run, show payload");
-    expect(dryRun.disabled).toBe(false);
-    // No token, but the registry carries a member urn, so the payload can name the author.
-    expect(container.textContent).toContain("A dry run names Personal as the author");
 
     await act(async () => {
-      dryRun.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      press("k");
     });
     await flush();
+    expect(container.querySelector('aside[aria-label="Draft detail"]')?.textContent).toContain(
+      "Pricing is not the objection",
+    );
 
-    expect(api.dryRun).toHaveBeenCalledWith(ITEM_ID, "kot-personal");
-    expect(container.textContent).toContain("urn:li:person:TESTURN");
+    await act(async () => {
+      press("a");
+    });
+    await flush();
+    expect(api.approve).toHaveBeenCalledWith(THIRD_ID);
   });
 
-  it("says unresolved only when there is no member urn either", async () => {
-    api.clients.mockResolvedValue([{ ...client, accounts: [{ ...PERSON, member_urn: "" }, PAGE] }]);
-    const container = await renderPage();
+  it("opens the send-back form from the keyboard", async () => {
+    const container = await openQueue();
+
     await act(async () => {
-      buttonByText(container, "Review queue").dispatchEvent(
-        new MouseEvent("click", { bubbles: true }),
-      );
-    });
-    await flush();
-    await act(async () => {
-      buttonByText(container, "A cheap site is a deferred bill").dispatchEvent(
-        new MouseEvent("click", { bubbles: true }),
-      );
+      press("r");
     });
     await flush();
 
-    expect(container.textContent).toContain("with the author unresolved");
+    expect(container.querySelector('input[aria-label="Why send it back"]')).not.toBeNull();
+  });
+
+  it("labels the status of a draft in words an owner uses", async () => {
+    const container = await openQueue();
+    const queue = container.querySelector('section[aria-label="Draft queue"]');
+
+    expect(queue?.textContent).toContain("Waiting for you");
+    expect(queue?.textContent).toContain("Approved");
+    expect(queue?.textContent).not.toContain("pending");
+  });
+
+  it("shows the preview with the fold and keeps the test send folded away", async () => {
+    const container = await openQueue();
+    const detail = container.querySelector('aside[aria-label="Draft detail"]') as HTMLElement;
+
+    expect(detail.textContent).toContain("…see more");
+    expect(detail.textContent).toContain("Test send");
+    expect(detail.textContent).toContain("Preview only. Nothing sends in beta.");
   });
 });

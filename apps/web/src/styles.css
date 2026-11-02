@@ -97,3 +97,22 @@ body,
     opacity: 0.3;
   }
 }
+
+/* Merrit surface scale: 22 title, 19 headline, 17 body, 15 secondary, 14 caption, 12 footnote.
+   Named with a merrit- prefix so the rest of the app keeps its own 14/20 scale. */
+@theme {
+  --text-merrit-title: 22px;
+  --text-merrit-title--line-height: 28px;
+  --text-merrit-title--letter-spacing: -0.012em;
+  --text-merrit-headline: 19px;
+  --text-merrit-headline--line-height: 26px;
+  --text-merrit-headline--letter-spacing: -0.008em;
+  --text-merrit-body: 17px;
+  --text-merrit-body--line-height: 25px;
+  --text-merrit-secondary: 15px;
+  --text-merrit-secondary--line-height: 22px;
+  --text-merrit-caption: 14px;
+  --text-merrit-caption--line-height: 20px;
+  --text-merrit-footnote: 12px;
+  --text-merrit-footnote--line-height: 16px;
+}

@@ -1,146 +1,189 @@
-import { Input, NativeSelect, NativeSelectOption, ScrollArea, Skeleton } from "@rakazo/ui-web";
+import { Badge, Button, Input, ScrollArea } from "@rakazo/ui-web";
+import { Check, Search, X } from "lucide-react";
 import { formatRelativeTime } from "../../lib/relative-time";
-import type { ApprovalItem, Filters } from "./api";
-import { CHANNEL_LABEL, cx, LanguageChip, STATUS_LABEL, StatusChip } from "./status";
-
-const STATUSES = Object.keys(STATUS_LABEL) as Array<keyof typeof STATUS_LABEL>;
+import type { ApprovalItem, Filters, MerritStatus } from "./api";
+import { ChannelLabel, cx, draftLabel, LanguageTag, StatusPill } from "./status";
 
 interface QueueProps {
   items: ApprovalItem[];
   filters: Filters;
   loading: boolean;
   selectedId: string | null;
-  onFilters: (next: Filters) => void;
+  draftNumbers: Map<string, number>;
+  onFilters: (filters: Filters) => void;
   onSelect: (id: string) => void;
+  onApprove: (id: string) => void;
+  onSendBack: (id: string) => void;
+  busy: boolean;
 }
 
-function QueueCard({
-  item,
-  active,
+const STATUS_OPTIONS: Array<{ value: MerritStatus | "all"; label: string }> = [
+  { value: "all", label: "All drafts" },
+  { value: "pending", label: "Waiting for you" },
+  { value: "approved", label: "Approved" },
+  { value: "rejected", label: "Rejected" },
+  { value: "dry_run", label: "Tested" },
+  { value: "deleted", label: "Removed" },
+];
+
+/** The queue: one filter row, dense rows, and the two decisions on hover. */
+export function Queue({
+  items,
+  filters,
+  loading,
+  selectedId,
+  draftNumbers,
+  onFilters,
   onSelect,
-}: {
-  item: ApprovalItem;
-  active: boolean;
-  onSelect: () => void;
-}) {
+  onApprove,
+  onSendBack,
+  busy,
+}: QueueProps) {
+  const set = (patch: Partial<Filters>) => onFilters({ ...filters, ...patch });
+
   return (
-    <button
-      type="button"
-      onClick={onSelect}
-      aria-current={active ? "true" : undefined}
-      className={cx(
-        "w-full rounded-lg border p-3 text-left transition-colors",
-        active
-          ? "border-ring/60 bg-accent/60"
-          : "border-border bg-card hover:border-border/80 hover:bg-accent/30",
-      )}
+    <section
+      className="flex min-h-0 min-w-0 flex-1 flex-col border-b border-border pb-2 md:border-b-0 md:pb-0"
+      aria-label="Draft queue"
     >
-      <div className="flex items-center gap-2">
-        <span className="truncate text-xs text-muted-foreground">
-          {CHANNEL_LABEL[item.channel] ?? item.channel}
-        </span>
-        <LanguageChip language={item.language} />
-        <span className="ml-auto shrink-0">
-          <StatusChip status={item.status} />
-        </span>
-      </div>
-      {/* dir="auto" so an Arabic angle keeps its punctuation on the correct side. */}
-      <p className="mt-2 line-clamp-1 text-sm font-medium" dir="auto">
-        {item.angle}
-      </p>
-      <p
-        className="mt-1 line-clamp-2 text-sm text-muted-foreground"
-        dir={item.language === "ar" ? "rtl" : "ltr"}
-      >
-        {item.body}
-      </p>
-      <p className="mt-2 text-xs text-faint-foreground">
-        {formatRelativeTime(item.created_at)}
-        {item.review_reason ? " · flagged for review" : ""}
-      </p>
-    </button>
-  );
-}
-
-/** Center column: filters over the queue for the selected brand. */
-export function Queue({ items, filters, loading, selectedId, onFilters, onSelect }: QueueProps) {
-  const patch = (next: Partial<Filters>) => onFilters({ ...filters, ...next });
-
-  return (
-    <section className="flex min-w-0 flex-1 flex-col" aria-label="Approval queue">
-      <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2.5">
-        <NativeSelect
-          aria-label="Filter by status"
-          value={filters.status}
-          onChange={(event) => patch({ status: event.target.value as Filters["status"] })}
-          className="h-8 w-32 text-xs"
-        >
-          <NativeSelectOption value="all">All statuses</NativeSelectOption>
-          {STATUSES.map((status) => (
-            <NativeSelectOption key={status} value={status}>
-              {STATUS_LABEL[status]}
-            </NativeSelectOption>
-          ))}
-        </NativeSelect>
-
-        <NativeSelect
-          aria-label="Filter by channel"
-          value={filters.channel}
-          onChange={(event) => patch({ channel: event.target.value })}
-          className="h-8 w-40 text-xs"
-        >
-          <NativeSelectOption value="all">All channels</NativeSelectOption>
-          <NativeSelectOption value="linkedin_personal">LinkedIn, personal</NativeSelectOption>
-          <NativeSelectOption value="linkedin_company">LinkedIn, page</NativeSelectOption>
-          <NativeSelectOption value="instagram">Instagram</NativeSelectOption>
-          <NativeSelectOption value="x">X</NativeSelectOption>
-        </NativeSelect>
-
-        <NativeSelect
-          aria-label="Filter by language"
-          value={filters.language}
-          onChange={(event) => patch({ language: event.target.value as Filters["language"] })}
-          className="h-8 w-36 text-xs"
-        >
-          <NativeSelectOption value="all">All languages</NativeSelectOption>
-          <NativeSelectOption value="en">English</NativeSelectOption>
-          <NativeSelectOption value="ar">Arabic</NativeSelectOption>
-        </NativeSelect>
-
-        <Input
-          aria-label="Search drafts"
-          placeholder="Search text or angle"
-          value={filters.q}
-          onChange={(event) => patch({ q: event.target.value })}
-          className="h-8 w-56 text-xs"
-        />
-
-        <span className="ml-auto text-xs text-muted-foreground tabular-nums">
+      <header className="flex items-baseline gap-2 px-5 pt-4 pb-2">
+        <h1 className="text-merrit-title font-semibold tracking-tight">Drafts</h1>
+        <span className="text-merrit-caption text-muted-foreground">
           {items.length} {items.length === 1 ? "draft" : "drafts"}
         </span>
+        <span className="ml-auto flex items-center gap-1 text-merrit-footnote text-faint-foreground">
+          <kbd className="rounded border border-border px-1">J</kbd>
+          <kbd className="rounded border border-border px-1">K</kbd> move
+          <kbd className="ml-1.5 rounded border border-border px-1">A</kbd> approve
+          <kbd className="rounded border border-border px-1">R</kbd> send back
+        </span>
+      </header>
+
+      <div className="flex items-center gap-2 px-5 pb-3">
+        <div className="relative min-w-0 flex-1">
+          <Search className="absolute top-2 left-2 size-3.5 text-muted-foreground" />
+          <Input
+            aria-label="Search drafts"
+            placeholder="Search drafts"
+            value={filters.q}
+            onChange={(event) => set({ q: event.target.value })}
+            className="h-8 pl-7 text-merrit-caption"
+          />
+        </div>
+        <select
+          aria-label="Status"
+          value={filters.status}
+          onChange={(event) => set({ status: event.target.value as Filters["status"] })}
+          className="h-8 rounded-md border border-border bg-transparent px-2 text-merrit-caption"
+        >
+          {STATUS_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+        <select
+          aria-label="Language"
+          value={filters.language}
+          onChange={(event) => set({ language: event.target.value as Filters["language"] })}
+          className="h-8 rounded-md border border-border bg-transparent px-2 text-merrit-caption"
+        >
+          <option value="all">Any language</option>
+          <option value="en">English</option>
+          <option value="ar">Arabic</option>
+        </select>
+        <select
+          aria-label="Channel"
+          value={filters.channel}
+          onChange={(event) => set({ channel: event.target.value as Filters["channel"] })}
+          className="h-8 rounded-md border border-border bg-transparent px-2 text-merrit-caption"
+        >
+          <option value="all">Any channel</option>
+          <option value="linkedin_personal">LinkedIn</option>
+          <option value="linkedin_company">LinkedIn page</option>
+        </select>
       </div>
 
-      <ScrollArea className="flex-1">
-        <div className="flex flex-col gap-2 p-4">
-          {loading
-            ? [0, 1, 2].map((key) => <Skeleton key={key} className="h-28 w-full rounded-lg" />)
-            : null}
-
+      <ScrollArea className="min-h-0 flex-1">
+        <ul className="px-2 pb-6">
+          {loading ? (
+            <li className="px-3 py-6 text-merrit-secondary text-muted-foreground">
+              Loading drafts…
+            </li>
+          ) : null}
           {!loading && items.length === 0 ? (
-            <div className="rounded-lg border border-border bg-card p-6 text-sm text-muted-foreground">
-              Nothing here yet. Generate a batch, or widen the filters.
-            </div>
+            <li className="px-3 py-6 text-merrit-secondary text-muted-foreground">
+              Nothing matches these filters.
+            </li>
           ) : null}
 
-          {items.map((item) => (
-            <QueueCard
-              key={item.id}
-              item={item}
-              active={item.id === selectedId}
-              onSelect={() => onSelect(item.id)}
-            />
-          ))}
-        </div>
+          {items.map((item) => {
+            const selected = item.id === selectedId;
+            return (
+              <li key={item.id}>
+                <div
+                  className={cx(
+                    "group relative flex items-center gap-3 rounded-lg px-3 py-2.5 transition-colors",
+                    selected ? "bg-accent" : "hover:bg-accent/50",
+                  )}
+                >
+                  <button
+                    type="button"
+                    onClick={() => onSelect(item.id)}
+                    aria-current={selected ? "true" : undefined}
+                    className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                  >
+                    <span className="w-16 shrink-0 text-merrit-footnote text-faint-foreground tabular-nums">
+                      {draftLabel(draftNumbers.get(item.id))}
+                    </span>
+                    <span dir="auto" className="min-w-0 flex-1">
+                      <span className="block truncate text-merrit-caption font-medium">
+                        {item.angle}
+                      </span>
+                      <span className="mt-0.5 flex min-w-0 items-center gap-1.5 overflow-hidden text-merrit-footnote text-muted-foreground">
+                        <ChannelLabel channel={item.channel} />
+                        <span>·</span>
+                        <LanguageTag language={item.language} />
+                        <span>·</span>
+                        <span>{formatRelativeTime(item.created_at)}</span>
+                        {item.review_reason ? (
+                          <Badge variant="outline" className="ml-1 text-merrit-footnote">
+                            needs a look
+                          </Badge>
+                        ) : null}
+                      </span>
+                    </span>
+                    <StatusPill status={item.status} />
+                  </button>
+
+                  {item.status === "pending" ? (
+                    <span className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                      <Button
+                        size="icon-xs"
+                        variant="outline"
+                        aria-label={`Approve ${draftLabel(draftNumbers.get(item.id))}`}
+                        disabled={busy}
+                        onClick={() => onApprove(item.id)}
+                      >
+                        <Check className="size-3" />
+                      </Button>
+                      <Button
+                        size="icon-xs"
+                        variant="outline"
+                        aria-label={`Send back ${draftLabel(draftNumbers.get(item.id))}`}
+                        disabled={busy}
+                        className="border-destructive/40 text-destructive"
+                        onClick={() => onSendBack(item.id)}
+                      >
+                        <X className="size-3" />
+                      </Button>
+                    </span>
+                  ) : null}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
       </ScrollArea>
     </section>
   );

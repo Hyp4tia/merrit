@@ -63,9 +63,7 @@ export async function resolveAccounts(client: ClientEntry): Promise<ResolvedAcco
     return {
       ...account,
       connected: tokenUsable,
-      reason: tokenUsable
-        ? ""
-        : "No LinkedIn token on file. Authorize the account before it can post.",
+      reason: tokenUsable ? "" : "Not connected. Authorize this account before it can post.",
     };
   });
 }
