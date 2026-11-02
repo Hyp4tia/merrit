@@ -283,10 +283,13 @@ export async function publishApproved(
     : accounts.find((account) => account.connected);
 
   if (!chosen) {
+    // Name the cause instead of a generic "not connected": with no token the real reason is the
+    // token, and the caller needs to read that, not guess.
+    const reasons = accounts.map((account) => `${account.label}: ${account.reason}`).join(" ");
     throw new Error(
       options.accountId
         ? `Unknown account "${options.accountId}" for ${client.slug}.`
-        : `No connected account for ${client.slug}. Connect one before publishing.`,
+        : `No connected account for ${client.slug}. ${reasons}`,
     );
   }
   if (!chosen.connected) {

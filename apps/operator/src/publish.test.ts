@@ -39,7 +39,23 @@ function makeItem(overrides: Record<string, unknown> = {}) {
   };
 }
 
-const state = { current: makeItem(), items: [makeItem()] };
+const TOKEN = {
+  access_token: "test-token-not-real",
+  person_urn: "urn:li:person:DRYRUN",
+  scope: "openid,profile,w_member_social",
+  expires_at: null,
+};
+
+// Flippable so the no-token path can be exercised. A missing token must fail closed.
+const state: {
+  current: ReturnType<typeof makeItem>;
+  items: ReturnType<typeof makeItem>[];
+  token: typeof TOKEN | null;
+} = {
+  current: makeItem(),
+  items: [makeItem()],
+  token: TOKEN,
+};
 const setStatus = vi.fn(
   async (_id: string, status: string, patch: Record<string, unknown> = {}) => {
     state.current = { ...state.current, status, ...patch };
@@ -55,12 +71,7 @@ vi.mock("./db.ts", () => ({
   listItems: vi.fn(async () => state.items),
   setStatus: (...args: Parameters<typeof setStatus>) => setStatus(...args),
   addEvent: (...args: Parameters<typeof addEvent>) => addEvent(...args),
-  getLinkedInToken: vi.fn(async () => ({
-    access_token: "test-token-not-real",
-    person_urn: "urn:li:person:DRYRUN",
-    scope: "openid,profile,w_member_social",
-    expires_at: null,
-  })),
+  getLinkedInToken: vi.fn(async () => state.token),
   initSchema: vi.fn(async () => undefined),
   pool: { end: vi.fn(async () => undefined), query: vi.fn(async () => ({ rows: [] })) },
 }));
@@ -74,6 +85,7 @@ const fetchSpy = vi.spyOn(globalThis, "fetch");
 beforeEach(() => {
   state.current = makeItem();
   state.items = [makeItem()];
+  state.token = TOKEN;
   setStatus.mockClear();
   addEvent.mockClear();
   fetchSpy.mockReset();
@@ -182,6 +194,43 @@ describe("the approval gate still holds", () => {
       "published",
       expect.objectContaining({ platform_post_id: "urn:li:share:7654321" }),
     );
+  });
+});
+
+describe("a missing token fails closed", () => {
+  beforeEach(() => {
+    state.token = null;
+  });
+
+  it("refuses a dry run with the reason, and never falls back to another account", async () => {
+    const error = await actions
+      .publishApproved(ID, { dryRun: true })
+      .catch((caught: unknown) => caught);
+    expect(String(error)).toMatch(/No connected account for kot/);
+    expect(String(error)).toMatch(/No LinkedIn token on file/);
+    expect(String(error)).toMatch(/Community Management API approval/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(setStatus).not.toHaveBeenCalled();
+  });
+
+  it("refuses a real publish before any network call", async () => {
+    const error = await actions.publishApproved(ID).catch((caught: unknown) => caught);
+    expect(String(error)).toMatch(/No connected account for kot/);
+    expect(String(error)).toMatch(/No LinkedIn token on file/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("refuses even when an account is named explicitly", async () => {
+    await expect(
+      actions.publishApproved(ID, { dryRun: true, accountId: "kot-personal" }),
+    ).rejects.toThrow(/No LinkedIn token on file/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("the publisher itself refuses before building a request", async () => {
+    const { publishPost } = await import("./publish-linkedin.ts");
+    await expect(publishPost("body")).rejects.toThrow(/No LinkedIn token/);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
 
