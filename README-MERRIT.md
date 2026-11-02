@@ -359,6 +359,16 @@ syncs unmergeable.
 
 ---
 
+## Versioning
+
+Our releases are tagged `merrit-vX.Y`. Upstream Rakazo tags (`v0.1.0` through `v0.4.0`, and
+`android`) are kept untouched so a Merrit commit can still be diffed against the release it came
+from. When you need our version, not upstream's, use:
+
+```bash
+git describe --match 'merrit-v*'
+```
+
 ## License
 
 Merrit's own code (`apps/operator`, `scripts/rebrand-to-merrit.mjs`, `NOTICE`) is copyright
