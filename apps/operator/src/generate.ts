@@ -102,11 +102,17 @@ function systemPrompt(brand: Brand): string {
   ].join("\n");
 }
 
+interface EditRequest {
+  previous: string;
+  instruction: string;
+}
+
 function userPrompt(
   brand: Brand,
   angle: Angle,
   retry: { violations: Violation[]; previousBody: string } | null,
   rejectReason: string | null,
+  edit: EditRequest | null,
 ): string {
   const languageRule =
     angle.language === "ar"
@@ -123,7 +129,21 @@ function userPrompt(
   if (brand.cadence)
     lines.push(`Cadence context: this is one of ${brand.cadence} on this profile.`);
 
-  if (rejectReason) {
+  if (edit) {
+    // A revision is an edit of an existing draft, not a new draft from the angle. The model has to
+    // see the text it is editing, or it writes a different post about something else entirely.
+    lines.push(
+      "",
+      "MODE: revision of an existing draft. Do not start a new post.",
+      "",
+      "CURRENT DRAFT, verbatim:",
+      edit.previous,
+      "",
+      `INSTRUCTION FROM THE OWNER: ${edit.instruction}`,
+      "",
+      "Edit this draft. Keep its subject and argument. Apply only the instruction. Return the full edited text.",
+    );
+  } else if (rejectReason) {
     lines.push(
       "",
       `The human owner rejected the previous draft. Their reason, verbatim: "${rejectReason}". Fix exactly that while keeping the angle.`,
@@ -149,6 +169,128 @@ function userPrompt(
   }
 
   return lines.join("\n");
+}
+
+const STOPWORDS = new Set([
+  "about",
+  "after",
+  "again",
+  "against",
+  "almost",
+  "already",
+  "another",
+  "because",
+  "before",
+  "being",
+  "between",
+  "could",
+  "does",
+  "doesn",
+  "doing",
+  "done",
+  "down",
+  "during",
+  "each",
+  "even",
+  "every",
+  "from",
+  "have",
+  "having",
+  "here",
+  "into",
+  "itself",
+  "just",
+  "like",
+  "made",
+  "make",
+  "many",
+  "might",
+  "more",
+  "most",
+  "much",
+  "must",
+  "need",
+  "never",
+  "only",
+  "other",
+  "over",
+  "same",
+  "should",
+  "some",
+  "still",
+  "such",
+  "than",
+  "that",
+  "their",
+  "them",
+  "then",
+  "there",
+  "these",
+  "they",
+  "this",
+  "those",
+  "through",
+  "under",
+  "until",
+  "very",
+  "want",
+  "well",
+  "were",
+  "what",
+  "when",
+  "where",
+  "which",
+  "while",
+  "with",
+  "without",
+  "would",
+  "your",
+  "yours",
+  "ours",
+  "theyre",
+  "youre",
+  "cant",
+  "wont",
+  "isnt",
+  "arent",
+]);
+
+function contentTokens(text: string): Set<string> {
+  const words = text
+    .toLowerCase()
+    .replace(/[^a-z0-9,.\s]/g, " ")
+    .split(/\s+/)
+    .map((word) => word.replace(/[.,]+$/, ""))
+    .filter((word) => word.length >= 4 && !STOPWORDS.has(word));
+  return new Set(words);
+}
+
+/**
+ * How much of the previous subject survives an edit, as the share of the old content words that
+ * are still present. A shorter rewrite keeps most of them; a topic swap keeps almost none.
+ */
+export function subjectRetention(previous: string, edited: string): number {
+  const before = contentTokens(previous);
+  const after = contentTokens(edited);
+  if (before.size === 0) return 1;
+  let shared = 0;
+  for (const token of before) if (after.has(token)) shared += 1;
+  return shared / before.size;
+}
+
+const MIN_SUBJECT_RETENTION = 0.3;
+
+/** A revision changed the topic instead of editing the draft. The item keeps its previous body. */
+export class RevisionDrift extends Error {
+  constructor(
+    readonly retention: number,
+    readonly body: string,
+  ) {
+    super(
+      `Revision changed the subject: only ${Math.round(retention * 100)}% of the previous draft's wording survived`,
+    );
+    this.name = "RevisionDrift";
+  }
 }
 
 export interface GeneratedDraft {
@@ -180,6 +322,7 @@ interface DraftOnceOptions {
   rejectReason?: string | null;
   previousBody?: string | null;
   extraViolations?: Violation[];
+  edit?: EditRequest | null;
 }
 
 // Brand rules are hard: a draft that breaks one is never returned. Up to three attempts, each
@@ -192,7 +335,10 @@ async function draftOnce(
   const system = systemPrompt(brand);
   let retry: { violations: Violation[]; previousBody: string } | null = options.extraViolations
     ?.length
-    ? { violations: options.extraViolations, previousBody: options.previousBody ?? "" }
+    ? {
+        violations: options.extraViolations,
+        previousBody: options.previousBody ?? options.edit?.previous ?? "",
+      }
     : null;
   let rejectReason = options.rejectReason ?? null;
   let lastViolations: Violation[] = [];
@@ -204,7 +350,10 @@ async function draftOnce(
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
     const { value, result } = await chatJson<{ body?: string; angle?: string }>([
       { role: "system", content: system },
-      { role: "user", content: userPrompt(brand, angle, retry, rejectReason) },
+      {
+        role: "user",
+        content: userPrompt(brand, angle, retry, rejectReason, options.edit ?? null),
+      },
     ]);
 
     promptTokens += result.promptTokens;
@@ -236,18 +385,58 @@ async function draftOnce(
 export async function generateDraft(
   brand: Brand,
   angle: Angle,
-  options: { rejectReason?: string | null; previousBody?: string | null } = {},
+  options: {
+    rejectReason?: string | null;
+    previousBody?: string | null;
+    /** Present only for revisions: the draft being edited plus the owner's instruction. */
+    edit?: EditRequest | null;
+  } = {},
 ): Promise<GeneratedDraft> {
-  const first = await draftOnce(brand, angle, options);
+  const edit = options.edit ?? null;
+  const facts = extractCommercialFacts(brand);
+
+  const attempt = (extra: Violation[] = []) =>
+    draftOnce(brand, angle, {
+      ...options,
+      edit,
+      extraViolations: extra.length ? extra : undefined,
+    });
+
+  // The queue card shows the angle, so the summary is copy too and gets the same guard.
+  const guard = (draft: GeneratedDraft): Violation[] => [
+    ...checkCommercialTerms(draft.body, facts),
+    ...checkCommercialTerms(draft.angleSummary, facts).map((violation) => ({
+      rule: violation.rule,
+      detail: `angle summary: ${violation.detail}`,
+    })),
+  ];
+
+  const assertSubject = (draft: GeneratedDraft) => {
+    if (!edit) return;
+    const retention = subjectRetention(edit.previous, draft.body);
+    if (retention < MIN_SUBJECT_RETENTION) throw new RevisionDrift(retention, draft.body);
+  };
+
+  let first = await attempt();
+  if (edit && subjectRetention(edit.previous, first.body) < MIN_SUBJECT_RETENTION) {
+    // A revision that swapped the subject gets one explicit chance to come back to it.
+    first = await attempt([
+      {
+        rule: "subject",
+        detail: `the edit changed the subject of the draft. Keep the same subject, edit the current draft, and apply only: ${edit.instruction}`,
+      },
+    ]);
+  }
+  assertSubject(first);
+
+  const violations = guard(first);
+  if (violations.length === 0) return first;
 
   // The commercial guard is the backstop behind the prompt: one regeneration with the named
   // violations, then a human decides.
-  const facts = extractCommercialFacts(brand);
-  const violations = checkCommercialTerms(first.body, facts);
-  if (violations.length === 0) return first;
-
-  const second = await draftOnce(brand, angle, { ...options, extraViolations: violations });
-  const remaining = checkCommercialTerms(second.body, facts);
+  const second = await attempt(violations);
+  assertSubject(second);
+  const remaining = guard(second);
   if (remaining.length === 0) return second;
 
   throw new BrandReviewRequired(

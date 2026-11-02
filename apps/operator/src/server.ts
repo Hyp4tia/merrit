@@ -451,6 +451,8 @@ const server = createServer(async (req, res) => {
     json(res, 404, { ok: false, error: `No route for ${route}` });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    // A failed turn is also written to the log: the response alone is easy to miss in the UI.
+    console.error(`[merrit] ${req.method} ${req.url} failed: ${message}`, error);
     json(res, 200, { ok: false, error: message });
   }
 });

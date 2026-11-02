@@ -41,6 +41,14 @@ const SHORTER_DRAFT =
   "a bill attached. Every claim on it can be checked by hand, on the day it ships, by the person " +
   "who has to use it the next morning.";
 
+// A rewrite that has nothing to do with the draft it was asked to edit.
+const AI_DRIFT =
+  "Most software requests we get now are about AI. The interesting part is not the model. It is " +
+  "the plumbing around it: who owns the key, what happens when the provider raises the price, and " +
+  "whether the answer can be checked at all. We build the plumbing first. A demo that impresses " +
+  "in a meeting proves nothing about the second month, when the invoice arrives and the traffic " +
+  "doubles. Ask what the system does when the model is unavailable.";
+
 const REGISTRY = `${process.env.MERRIT_BRAND_FILE ?? ""}`;
 
 const client: ClientEntry = {
@@ -253,6 +261,64 @@ describe("the delegation loop", () => {
     );
     expect(rows).toHaveLength(1);
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("refuses a revision that changes the subject and keeps the previous body", async () => {
+    queue.push(
+      {
+        action: "delegate",
+        to: "copywriter",
+        request: "Draft the cheap-site post",
+        reply: "On it.",
+      },
+      { body: LONG_DRAFT, angle: "cheap-site objection" },
+    );
+    await postToBot(client, "test-lead", "Draft the cheap-site post");
+    const before = await itemRows();
+
+    // The subject swaps twice, so the single regeneration cannot rescue it.
+    queue.push({ body: AI_DRIFT, angle: "ai plumbing" }, { body: AI_DRIFT, angle: "ai plumbing" });
+    const revision = await postToBot(client, "test-copy", "make it shorter");
+
+    const after = await itemRows();
+    expect(after).toHaveLength(1);
+    expect(after[0]?.id).toBe(before[0]?.id);
+    // The item keeps the draft the owner already had, rather than becoming a different post.
+    expect(after[0]?.body).toBe(LONG_DRAFT);
+    expect(revision.reply).toContain("kept the previous draft");
+    expect(revision.reply).toContain("different subject");
+
+    const { rows } = await pool.query<{ detail: string }>(
+      "SELECT detail FROM merrit_event WHERE item_id = $1 AND action = 'revision_refused'",
+      [before[0]?.id],
+    );
+    expect(rows).toHaveLength(1);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("repairs a delegation whose cards never reached the copywriter thread", async () => {
+    // The thin call makes the delegation and the item but writes no thread cards, which is the
+    // half written state a crash can leave behind.
+    queue.push({ body: LONG_DRAFT, angle: "cheap-site objection" });
+    await delegate({
+      client,
+      fromBotId: "test-lead",
+      toBotId: "test-copy",
+      request: "Draft the cheap-site post",
+    });
+    expect(await messageCount("test-copy")).toBe(0);
+
+    // The owner asks again: no second item, and the empty thread is filled.
+    queue.push({
+      action: "delegate",
+      to: "copywriter",
+      request: "Draft the cheap-site post",
+      reply: "On it.",
+    });
+    await postToBot(client, "test-lead", "Draft the cheap-site post");
+
+    expect(await itemRows()).toHaveLength(1);
+    expect(await messageCount("test-copy")).toBe(2);
   });
 
   it("refuses an inactive bot by name instead of routing to it", async () => {

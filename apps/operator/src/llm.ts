@@ -66,16 +66,50 @@ async function chatOnce(messages: ChatMessage[], maxTokens: number): Promise<Llm
   };
 }
 
+/**
+ * The first balanced JSON object in a reply. Models wrap JSON in fences, follow it with a second
+ * object, or add a sentence after it, and slicing from the first brace to the last one then spans
+ * both. The scan tracks strings so a brace inside the post body cannot close the object early.
+ */
+function firstJsonObject(text: string): string | null {
+  const start = text.indexOf("{");
+  if (start === -1) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = start; index < text.length; index += 1) {
+    const char = text[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (char === "{") depth += 1;
+    if (char === "}") {
+      depth -= 1;
+      if (depth === 0) return text.slice(start, index + 1);
+    }
+  }
+  return null;
+}
+
 // Models still wrap JSON in markdown fences often enough that parsing needs to be tolerant,
 // but it must fail loudly rather than fall back to prose as the post body.
 export function parseJsonReply<T>(text: string): T {
   const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(text);
-  const candidate = (fenced?.[1] ?? text).trim();
-  const start = candidate.indexOf("{");
-  const end = candidate.lastIndexOf("}");
-  if (start === -1 || end === -1)
-    throw new Error(`No JSON object in model reply: ${text.slice(0, 200)}`);
-  return JSON.parse(candidate.slice(start, end + 1)) as T;
+  const object = firstJsonObject(fenced?.[1] ?? text) ?? firstJsonObject(text);
+  if (!object) throw new Error(`No JSON object in model reply: ${text.slice(0, 200)}`);
+  return JSON.parse(object) as T;
 }
 
 export async function chatJson<T>(

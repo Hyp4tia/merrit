@@ -18,7 +18,7 @@ import {
   upsertDelegation,
 } from "./db.ts";
 import type { Angle } from "./generate.ts";
-import { generateDraft, PROMPT_VERSION } from "./generate.ts";
+import { BrandReviewRequired, generateDraft, PROMPT_VERSION, RevisionDrift } from "./generate.ts";
 import { chatJson } from "./llm.ts";
 
 export interface MessageView {
@@ -165,12 +165,13 @@ async function draftFor(
       }
     : { key: "delegated-request", brief: request, language: "en" };
 
-  const draft = await generateDraft(brandFile, angle, {
-    rejectReason: previous ? request : null,
-    previousBody: previous?.body ?? null,
-  });
-
-  return draft;
+  // A revision goes through edit mode, so the model edits the current draft instead of writing a
+  // new post from the angle. The instruction is not a rejection reason.
+  return generateDraft(
+    brandFile,
+    angle,
+    previous ? { edit: { previous: previous.body, instruction: request } } : {},
+  );
 }
 
 function delegationKey(clientSlug: string, from: string, to: string, request: string): string {
@@ -251,9 +252,12 @@ async function leadTurn(client: ClientEntry, bot: Bot, text: string): Promise<Tu
     current = await linkDelegationItem(delegation.id, item.id);
   }
 
-  // The card is written once. A retry must not duplicate the copywriter's thread.
-  if (created) {
-    const copyThread = await ensureThread(client.slug, target.id);
+  // The cards are keyed on the delegation row, not on whether it was created in this call: a
+  // delegation that exists without its cards (a half finished run) is repaired by the next attempt
+  // instead of leaving the copywriter with an empty thread.
+  const copyThread = await ensureThread(client.slug, target.id);
+  const copyMessages = await listMessages(copyThread.id);
+  if (!copyMessages.some((message) => message.delegation_id === delegation.id)) {
     await addMessage({
       threadId: copyThread.id,
       client: client.slug,
@@ -320,11 +324,37 @@ async function copywriterTurn(client: ClientEntry, bot: Bot, text: string): Prom
   if (!item) throw new Error(`Item ${linked} no longer exists`);
 
   // A copywriter reply is a revision instruction against the same item: one item, edited in place.
-  const draft = await draftFor(clientBrand(client), text, {
-    body: item.body,
-    language: item.language,
-    angle: item.angle,
-  });
+  let draft: Awaited<ReturnType<typeof draftFor>>;
+  try {
+    draft = await draftFor(clientBrand(client), text, {
+      body: item.body,
+      language: item.language,
+      angle: item.angle,
+    });
+  } catch (error) {
+    // A revision that changes the subject, or invents terms, is refused rather than written over
+    // the draft the owner already has.
+    const reason =
+      error instanceof RevisionDrift
+        ? `that instruction pulled the post onto a different subject (${Math.round(error.retention * 100)}% of the wording survived)`
+        : error instanceof BrandReviewRequired
+          ? `the edited version invented ${error.violations.map((violation) => violation.detail).join("; ")}`
+          : null;
+    if (!reason) throw error;
+
+    const reply = `I kept the previous draft. This edit was refused because ${reason}. Nothing changed in the queue, so try a narrower instruction.`;
+    await addEvent(item.id, "revision_refused", `${text} | ${reason}`);
+    await addMessage({
+      threadId: thread.id,
+      client: client.slug,
+      bot: bot.id,
+      role: "assistant",
+      content: reply,
+      itemId: item.id,
+    });
+    return { reply, messages: await messageViews(thread.id), delegation: null, itemId: item.id };
+  }
+
   await updateBody(item.id, draft.body);
   await addEvent(item.id, "revised", text);
 
