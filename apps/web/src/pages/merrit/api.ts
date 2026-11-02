@@ -42,8 +42,10 @@ export interface Account {
   id: string;
   label: string;
   kind: "person" | "organization";
-  status: "connected" | "not_connected";
+  /** May it post at all, if authorized. Declared in the registry, never a connectivity claim. */
+  permission: "granted" | "blocked";
   note: string;
+  /** Derived by the server from token presence. */
   connected: boolean;
   /** Why it cannot post, in words for the UI. Empty when connected. */
   reason: string;

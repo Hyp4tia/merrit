@@ -12,8 +12,14 @@ interface DetailProps {
   events: ItemEvent[];
   loading: boolean;
   onChanged: () => void;
-  /** The account the dry run would post as. Undefined means nothing is connected. */
-  account: { id: string; label: string; connected: boolean; reason: string } | null;
+  /** The account the dry run would resolve. Permission decides availability, not connectivity. */
+  account: {
+    id: string;
+    label: string;
+    permission: "granted" | "blocked";
+    connected: boolean;
+    reason: string;
+  } | null;
 }
 
 function ViolationList({
@@ -282,10 +288,10 @@ export function ItemDetail({ item, events, loading, onChanged, account }: Detail
               size="sm"
               variant="secondary"
               className="w-full"
-              disabled={busy || !canDryRun(item.status) || !account?.connected}
+              disabled={busy || !canDryRun(item.status) || account?.permission !== "granted"}
               title={
-                !account?.connected
-                  ? (account?.reason ?? "No account is connected for this brand.")
+                account?.permission !== "granted"
+                  ? (account?.reason ?? "No account in this brand may post.")
                   : canDryRun(item.status)
                     ? "Show the exact payload without sending it"
                     : "Approve the draft before rehearsing a publish"
@@ -296,10 +302,11 @@ export function ItemDetail({ item, events, loading, onChanged, account }: Detail
               Dry run, show payload
             </Button>
             <p className="text-xs text-faint-foreground">
-              {account?.connected
-                ? `Publishing is disabled in this build. A dry run would post as ${account.label} and it never contacts LinkedIn.`
-                : (account?.reason ??
-                  "No account is connected for this brand, so no payload can be produced.")}
+              {account?.permission !== "granted"
+                ? (account?.reason ?? "No account in this brand may post.")
+                : account.connected
+                  ? `Publishing is disabled in this build. A dry run would post as ${account.label} and it never contacts LinkedIn.`
+                  : `A dry run will show the exact payload, with the author unresolved: ${account.reason}`}
             </p>
           </div>
 

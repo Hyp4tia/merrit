@@ -77,21 +77,36 @@ try {
   console.log(`queue cards: ${await queue().locator("button").count()}`);
   await shot("03-queue");
 
-  // 4. Detail: the dry-run control and its honest state for the selected account.
+  // 4. Detail, approve, then the dry run. A rehearsal needs no credential, so the payload is
+  // produced with the author explicitly unresolved instead of being blocked.
   const cards = queue().locator("button").filter({ hasText: "Pending" });
   if ((await cards.count()) > 0) {
     await cards.first().click();
     await detail().getByRole("textbox", { name: "Draft body" }).waitFor({ timeout: 20_000 });
-    await page.waitForTimeout(700);
+    await page.waitForTimeout(600);
+
     const dryRun = detail().getByRole("button", { name: "Dry run, show payload" });
-    console.log(`dry-run button disabled: ${await dryRun.isDisabled()}`);
+    console.log(`dry-run disabled before approval: ${await dryRun.isDisabled()}`);
     const caption = await detail()
-      .getByText(/Publishing is disabled|not connected|No LinkedIn token/)
-      .last()
+      .getByText(/with the author unresolved|Publishing is disabled/)
+      .first()
       .innerText()
       .catch(() => "");
-    console.log(`caption: ${caption.replace(/\s+/g, " ").slice(0, 160)}`);
-    await shot("04-detail");
+    console.log(`caption: ${caption.replace(/\s+/g, " ").slice(0, 170)}`);
+
+    await detail().getByRole("button", { name: "Approve" }).click();
+    await detail().getByText("Approved. Publishing stays disabled").waitFor({ timeout: 30_000 });
+    await page.waitForTimeout(800);
+    console.log(`dry-run disabled after approval: ${await dryRun.isDisabled()}`);
+
+    await dryRun.click();
+    await detail().getByText("Payload that would be sent").waitFor({ timeout: 30_000 });
+    await detail().getByText("Payload that would be sent").scrollIntoViewIfNeeded();
+    await page.waitForTimeout(400);
+    const payload = await detail().innerText();
+    const author = payload.split("\n").find((line) => line.includes("unresolved")) ?? "?";
+    console.log(`payload author: ${author.trim()}`);
+    await shot("04-dry-run-payload");
   } else {
     console.log("no pending draft to open");
   }

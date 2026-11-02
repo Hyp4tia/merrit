@@ -5,14 +5,14 @@ import type { Brand } from "./brand.ts";
 import { loadBrand } from "./brand.ts";
 
 export type AccountKind = "person" | "organization";
-export type AccountStatus = "connected" | "not_connected";
+/** May this account post at all, if it is authorized. Never a claim about connectivity. */
+export type AccountPermission = "granted" | "blocked";
 
 export interface Account {
   id: string;
   label: string;
   kind: AccountKind;
-  /** What the registry claims. The runtime resolves the truth on top of this. */
-  status: AccountStatus;
+  permission: AccountPermission;
   note: string;
 }
 
@@ -32,10 +32,11 @@ export interface ClientEntry {
   bots: Bot[];
 }
 
-/** An account as the API reports it, with the runtime state resolved. */
+/** An account as the API reports it, with connectivity derived at runtime. */
 export interface ResolvedAccount extends Account {
+  /** Derived: permission granted AND a usable token exists. Never read from the registry. */
   connected: boolean;
-  /** Why it is not usable, in the words the UI shows. Empty when connected. */
+  /** Why it cannot post right now, in the words the UI shows. Empty when connected. */
   reason: string;
 }
 
@@ -47,7 +48,7 @@ function accountsOf(entry: Record<string, unknown>): Account[] {
       id: String(record.id ?? ""),
       label: String(record.label ?? record.id ?? ""),
       kind: record.kind === "organization" ? "organization" : "person",
-      status: record.status === "connected" ? "connected" : "not_connected",
+      permission: record.permission === "granted" ? "granted" : "blocked",
       note: String(record.note ?? ""),
     };
   });

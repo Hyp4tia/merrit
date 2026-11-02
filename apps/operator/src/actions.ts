@@ -49,23 +49,23 @@ export async function resolveAccounts(client: ClientEntry): Promise<ResolvedAcco
   const tokenUsable = Boolean(token?.access_token && token.person_urn);
 
   return client.accounts.map((account) => {
-    if (account.kind === "person") {
-      const connected = account.status === "connected" && tokenUsable;
+    // Permission comes from the registry. Connectivity is derived here, from token presence, so a
+    // static "connected" can never contradict the system.
+    if (account.permission === "blocked") {
       return {
         ...account,
-        connected,
-        reason: connected
-          ? ""
-          : tokenUsable
-            ? "This account is not marked connected in the registry."
-            : "No LinkedIn token on file. Authorize the account before a post can be produced.",
+        connected: false,
+        reason:
+          account.note ||
+          "This account is not permitted to post in this build. See the client registry for the reason.",
       };
     }
     return {
       ...account,
-      connected: false,
-      reason:
-        "Page posting needs LinkedIn Community Management API approval, which this build does not have.",
+      connected: tokenUsable,
+      reason: tokenUsable
+        ? ""
+        : "No LinkedIn token on file. Authorize the account before it can post.",
     };
   });
 }
@@ -276,34 +276,36 @@ export async function publishApproved(
 
   const client = findClient(clients(), item.client);
   const accounts = await resolveAccounts(client);
-  // No account given means the client's first connected one, and only if there is one. This runs
-  // for a real publish too: there is no silent fallback to the personal profile, ever.
+  const dryRun = options.dryRun ?? config.dryRun;
+
+  // A named account is honoured exactly or refused. With no name, prefer a connected account and
+  // otherwise the first one with permission, because a rehearsal does not need credentials. A
+  // blocked account is never a candidate, so nothing falls back to a profile that may not post.
   const chosen = options.accountId
     ? accounts.find((account) => account.id === options.accountId)
-    : accounts.find((account) => account.connected);
+    : (accounts.find((account) => account.connected) ??
+      accounts.find((account) => account.permission === "granted"));
 
   if (!chosen) {
-    // Name the cause instead of a generic "not connected": with no token the real reason is the
-    // token, and the caller needs to read that, not guess.
     const reasons = accounts.map((account) => `${account.label}: ${account.reason}`).join(" ");
     throw new Error(
       options.accountId
         ? `Unknown account "${options.accountId}" for ${client.slug}.`
-        : `No connected account for ${client.slug}. ${reasons}`,
+        : `No usable account for ${client.slug}. ${reasons}`,
     );
   }
-  if (!chosen.connected) {
+  if (chosen.permission !== "granted") {
+    throw new Error(`${chosen.label} cannot post. ${chosen.reason}`);
+  }
+  // Only a real publish needs a live credential. A dry run sends nothing, so blocking it on a
+  // token would hide the payload behind a promise it never makes.
+  if (!dryRun && !chosen.connected) {
     throw new Error(`${chosen.label} is not connected. ${chosen.reason}`);
-  }
-  if (chosen.kind === "organization") {
-    throw new Error(
-      `${chosen.label} is a page account. Page publishing is out of scope until Community Management API approval lands.`,
-    );
   }
 
   // A dry run stops before the POST. It builds the kit and moves the item to its own state, so
   // a rehearsal can never be read as a publication.
-  if (options.dryRun ?? config.dryRun) {
+  if (dryRun) {
     const kit = buildKit(item);
     const token = await getLinkedInToken();
     const payload: DryRunPayload = {
@@ -313,7 +315,11 @@ export async function publishApproved(
       body: item.body,
       accountId: chosen.id,
       accountLabel: chosen.label,
-      authorUrn: chosen.kind === "person" ? (token?.person_urn ?? "unauthenticated") : "",
+      // Never invent an author. If the account has no token, the payload says so in the field
+      // that will be sent, so a rehearsal cannot be mistaken for a ready-to-publish request.
+      authorUrn: chosen.connected
+        ? (token?.person_urn ?? "unresolved (account not connected)")
+        : "unresolved (account not connected)",
       kitPath: kit.dir,
       wouldPostTo: "https://api.linkedin.com/rest/posts",
     };

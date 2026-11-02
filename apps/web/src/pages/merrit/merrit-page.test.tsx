@@ -65,20 +65,22 @@ const { MerritPage } = await import("./merrit-page");
 
 const ITEM_ID = "11111111-1111-1111-1111-111111111111";
 
+// Permission comes from the registry, connectivity from the server. Personal is permitted but has
+// no token in this build, which is exactly the state the UI has to render honestly.
 const PERSON = {
   id: "kot-personal",
   label: "Personal",
   kind: "person" as const,
-  status: "connected" as const,
+  permission: "granted" as const,
   note: "",
-  connected: true,
-  reason: "",
+  connected: false,
+  reason: "No LinkedIn token on file. Authorize the account before it can post.",
 };
 const PAGE = {
   id: "kot-page",
   label: "Kōt page",
   kind: "organization" as const,
-  status: "not_connected" as const,
+  permission: "blocked" as const,
   note: "",
   connected: false,
   reason:
@@ -200,8 +202,10 @@ describe("Merrit home", () => {
     expect(selectByLabel(container, "Brand").value).toBe("kot");
 
     const accounts = selectByLabel(container, "Account");
+    // Connectivity is derived at runtime, so both read as not connected while no token exists,
+    // even though Personal is permitted to post once authorized.
     const labels = Array.from(accounts.options).map((option) => option.textContent);
-    expect(labels).toEqual(["Personal · connected", "Kōt page · not connected"]);
+    expect(labels).toEqual(["Personal · not connected", "Kōt page · not connected"]);
     expect(accounts.value).toBe("kot-personal");
   });
 
@@ -369,5 +373,51 @@ describe("Merrit queue surface", () => {
     expect(container.textContent).toContain(
       "Page posting needs LinkedIn Community Management API approval",
     );
+  });
+});
+
+describe("rehearsal without a credential", () => {
+  it("runs on a permitted account and marks the author unresolved", async () => {
+    api.dryRun.mockResolvedValue({
+      kit: "/tmp/kit",
+      item: item({ status: "dry_run" }),
+      payload: {
+        itemId: ITEM_ID,
+        channel: "linkedin_personal",
+        language: "en",
+        body: "body",
+        accountId: "kot-personal",
+        accountLabel: "Personal",
+        authorUrn: "unresolved (account not connected)",
+        kitPath: "/tmp/kit",
+        wouldPostTo: "https://api.linkedin.com/rest/posts",
+      },
+    });
+
+    const container = await renderPage();
+    await act(async () => {
+      buttonByText(container, "Review queue").dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+    });
+    await flush();
+    await act(async () => {
+      buttonByText(container, "A cheap site is a deferred bill").dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+    });
+    await flush();
+
+    const dryRun = buttonByText(container, "Dry run, show payload");
+    expect(dryRun.disabled).toBe(false);
+    expect(container.textContent).toContain("with the author unresolved");
+
+    await act(async () => {
+      dryRun.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    expect(api.dryRun).toHaveBeenCalledWith(ITEM_ID, "kot-personal");
+    expect(container.textContent).toContain("unresolved (account not connected)");
   });
 });

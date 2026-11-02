@@ -127,10 +127,10 @@ describe("dry run", () => {
     expect(state.current.published_url).toBeNull();
   });
 
-  it("refuses a disconnected page account instead of falling back to personal", async () => {
+  it("refuses a blocked page account instead of falling back to personal", async () => {
     await expect(
       actions.publishApproved(ID, { dryRun: true, accountId: "kot-page" }),
-    ).rejects.toThrow(/Kōt page is not connected.*Community Management API approval/);
+    ).rejects.toThrow(/Kōt page cannot post.*Community Management API approval/);
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(setStatus).not.toHaveBeenCalled();
   });
@@ -197,33 +197,39 @@ describe("the approval gate still holds", () => {
   });
 });
 
-describe("a missing token fails closed", () => {
+describe("with no token in the store", () => {
   beforeEach(() => {
     state.token = null;
   });
 
-  it("refuses a dry run with the reason, and never falls back to another account", async () => {
-    const error = await actions
-      .publishApproved(ID, { dryRun: true })
-      .catch((caught: unknown) => caught);
-    expect(String(error)).toMatch(/No connected account for kot/);
-    expect(String(error)).toMatch(/No LinkedIn token on file/);
-    expect(String(error)).toMatch(/Community Management API approval/);
+  it("still produces a dry-run payload, with the author explicitly unresolved", async () => {
+    const result = await actions.publishApproved(ID, { dryRun: true });
+
+    expect(result.mode).toBe("dry-run");
+    expect(result.payload?.authorUrn).toBe("unresolved (account not connected)");
+    expect(result.payload?.accountId).toBe("kot-personal");
+    expect(result.payload?.wouldPostTo).toBe("https://api.linkedin.com/rest/posts");
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(setStatus).not.toHaveBeenCalled();
+    expect(setStatus).toHaveBeenCalledWith(ID, "dry_run", expect.anything());
   });
 
-  it("refuses a real publish before any network call", async () => {
+  it("names the unresolved author for a named account too", async () => {
+    const result = await actions.publishApproved(ID, { dryRun: true, accountId: "kot-personal" });
+    expect(result.payload?.authorUrn).toBe("unresolved (account not connected)");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("still fails closed on a real publish, before any network call", async () => {
     const error = await actions.publishApproved(ID).catch((caught: unknown) => caught);
-    expect(String(error)).toMatch(/No connected account for kot/);
+    expect(String(error)).toMatch(/Personal is not connected/);
     expect(String(error)).toMatch(/No LinkedIn token on file/);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("refuses even when an account is named explicitly", async () => {
+  it("still refuses a blocked account, token or no token", async () => {
     await expect(
-      actions.publishApproved(ID, { dryRun: true, accountId: "kot-personal" }),
-    ).rejects.toThrow(/No LinkedIn token on file/);
+      actions.publishApproved(ID, { dryRun: true, accountId: "kot-page" }),
+    ).rejects.toThrow(/cannot post/);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 

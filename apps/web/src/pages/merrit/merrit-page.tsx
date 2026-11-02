@@ -183,6 +183,7 @@ export function MerritPage() {
                   ? {
                       id: account.id,
                       label: account.label,
+                      permission: account.permission,
                       connected: account.connected,
                       reason: account.reason,
                     }
