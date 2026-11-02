@@ -202,20 +202,22 @@ describe("with no token in the store", () => {
     state.token = null;
   });
 
-  it("still produces a dry-run payload, with the author explicitly unresolved", async () => {
+  it("still produces a dry-run payload, with the author named from the registry", async () => {
     const result = await actions.publishApproved(ID, { dryRun: true });
 
     expect(result.mode).toBe("dry-run");
-    expect(result.payload?.authorUrn).toBe("unresolved (account not connected)");
+    // kot-personal carries member_urn in the registry, so the payload names the real author even
+    // with no token. The urn is a public identifier, not a credential.
+    expect(result.payload?.authorUrn).toBe("urn:li:person:KhbMnlToOL");
     expect(result.payload?.accountId).toBe("kot-personal");
     expect(result.payload?.wouldPostTo).toBe("https://api.linkedin.com/rest/posts");
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(setStatus).toHaveBeenCalledWith(ID, "dry_run", expect.anything());
   });
 
-  it("names the unresolved author for a named account too", async () => {
+  it("resolves the named account's author too", async () => {
     const result = await actions.publishApproved(ID, { dryRun: true, accountId: "kot-personal" });
-    expect(result.payload?.authorUrn).toBe("unresolved (account not connected)");
+    expect(result.payload?.authorUrn).toBe("urn:li:person:KhbMnlToOL");
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 

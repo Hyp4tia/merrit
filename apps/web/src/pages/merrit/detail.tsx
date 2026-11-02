@@ -18,6 +18,7 @@ interface DetailProps {
     label: string;
     permission: "granted" | "blocked";
     connected: boolean;
+    memberUrn: string;
     reason: string;
   } | null;
 }
@@ -304,9 +305,9 @@ export function ItemDetail({ item, events, loading, onChanged, account }: Detail
             <p className="text-xs text-faint-foreground">
               {account?.permission !== "granted"
                 ? (account?.reason ?? "No account in this brand may post.")
-                : account.connected
-                  ? `Publishing is disabled in this build. A dry run would post as ${account.label} and it never contacts LinkedIn.`
-                  : `A dry run will show the exact payload, with the author unresolved: ${account.reason}`}
+                : account.connected || account.memberUrn
+                  ? `Publishing is disabled in this build. A dry run names ${account.label} as the author and never contacts LinkedIn.`
+                  : `A dry run will show the exact payload with the author unresolved: ${account.reason}`}
             </p>
           </div>
 

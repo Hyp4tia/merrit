@@ -104,7 +104,10 @@ try {
     await detail().getByText("Payload that would be sent").scrollIntoViewIfNeeded();
     await page.waitForTimeout(400);
     const payload = await detail().innerText();
-    const author = payload.split("\n").find((line) => line.includes("unresolved")) ?? "?";
+    const author =
+      payload.split("\n").find((line) => line.includes("urn:li:person")) ??
+      payload.split("\n").find((line) => line.includes("unresolved")) ??
+      "?";
     console.log(`payload author: ${author.trim()}`);
     await shot("04-dry-run-payload");
   } else {

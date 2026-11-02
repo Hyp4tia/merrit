@@ -13,6 +13,8 @@ export interface Account {
   label: string;
   kind: AccountKind;
   permission: AccountPermission;
+  /** Public member identifier, for naming the author in a payload. Never a credential. */
+  member_urn: string;
   note: string;
 }
 
@@ -49,6 +51,7 @@ function accountsOf(entry: Record<string, unknown>): Account[] {
       label: String(record.label ?? record.id ?? ""),
       kind: record.kind === "organization" ? "organization" : "person",
       permission: record.permission === "granted" ? "granted" : "blocked",
+      member_urn: String(record.member_urn ?? ""),
       note: String(record.note ?? ""),
     };
   });
@@ -112,6 +115,19 @@ export function findAccount(client: ClientEntry, accountId: string): Account {
     );
   }
   return account;
+}
+
+/**
+ * The author a payload would carry. A live token wins, because it is authoritative. Without one,
+ * the registry's public member urn still names the account exactly. With neither, the payload says
+ * "unresolved" rather than guessing or borrowing another account's identity.
+ */
+export function authorUrnFor(
+  account: Pick<Account, "member_urn">,
+  tokenUrn: string | null,
+): string {
+  if (tokenUrn) return tokenUrn;
+  return account.member_urn || "unresolved";
 }
 
 export function clientBrand(client: ClientEntry): Brand {

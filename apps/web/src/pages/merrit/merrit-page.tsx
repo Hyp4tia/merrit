@@ -185,6 +185,7 @@ export function MerritPage() {
                       label: account.label,
                       permission: account.permission,
                       connected: account.connected,
+                      memberUrn: account.member_urn,
                       reason: account.reason,
                     }
                   : null

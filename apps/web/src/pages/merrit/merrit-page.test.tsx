@@ -72,6 +72,7 @@ const PERSON = {
   label: "Personal",
   kind: "person" as const,
   permission: "granted" as const,
+  member_urn: "urn:li:person:TESTURN",
   note: "",
   connected: false,
   reason: "No LinkedIn token on file. Authorize the account before it can post.",
@@ -81,6 +82,7 @@ const PAGE = {
   label: "Kōt page",
   kind: "organization" as const,
   permission: "blocked" as const,
+  member_urn: "",
   note: "",
   connected: false,
   reason:
@@ -388,7 +390,7 @@ describe("rehearsal without a credential", () => {
         body: "body",
         accountId: "kot-personal",
         accountLabel: "Personal",
-        authorUrn: "unresolved (account not connected)",
+        authorUrn: "urn:li:person:TESTURN",
         kitPath: "/tmp/kit",
         wouldPostTo: "https://api.linkedin.com/rest/posts",
       },
@@ -410,7 +412,8 @@ describe("rehearsal without a credential", () => {
 
     const dryRun = buttonByText(container, "Dry run, show payload");
     expect(dryRun.disabled).toBe(false);
-    expect(container.textContent).toContain("with the author unresolved");
+    // No token, but the registry carries a member urn, so the payload can name the author.
+    expect(container.textContent).toContain("A dry run names Personal as the author");
 
     await act(async () => {
       dryRun.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -418,6 +421,25 @@ describe("rehearsal without a credential", () => {
     await flush();
 
     expect(api.dryRun).toHaveBeenCalledWith(ITEM_ID, "kot-personal");
-    expect(container.textContent).toContain("unresolved (account not connected)");
+    expect(container.textContent).toContain("urn:li:person:TESTURN");
+  });
+
+  it("says unresolved only when there is no member urn either", async () => {
+    api.clients.mockResolvedValue([{ ...client, accounts: [{ ...PERSON, member_urn: "" }, PAGE] }]);
+    const container = await renderPage();
+    await act(async () => {
+      buttonByText(container, "Review queue").dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+    });
+    await flush();
+    await act(async () => {
+      buttonByText(container, "A cheap site is a deferred bill").dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+    });
+    await flush();
+
+    expect(container.textContent).toContain("with the author unresolved");
   });
 });

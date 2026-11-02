@@ -1,6 +1,6 @@
 import type { Language } from "./brand.ts";
 import type { ClientEntry, ResolvedAccount } from "./clients.ts";
-import { clientBrand, findClient, loadClients } from "./clients.ts";
+import { authorUrnFor, clientBrand, findClient, loadClients } from "./clients.ts";
 import { checkCommercialTerms, extractCommercialFacts } from "./commercial.ts";
 import { config } from "./config.ts";
 import type { ApprovalItem, ItemStatus } from "./db.ts";
@@ -315,11 +315,9 @@ export async function publishApproved(
       body: item.body,
       accountId: chosen.id,
       accountLabel: chosen.label,
-      // Never invent an author. If the account has no token, the payload says so in the field
-      // that will be sent, so a rehearsal cannot be mistaken for a ready-to-publish request.
-      authorUrn: chosen.connected
-        ? (token?.person_urn ?? "unresolved (account not connected)")
-        : "unresolved (account not connected)",
+      // The payload names its author from the token, else the registry's public member urn, else
+      // says "unresolved". It never borrows another account's identity.
+      authorUrn: authorUrnFor(chosen, token?.person_urn ?? null),
       kitPath: kit.dir,
       wouldPostTo: "https://api.linkedin.com/rest/posts",
     };

@@ -44,6 +44,8 @@ export interface Account {
   kind: "person" | "organization";
   /** May it post at all, if authorized. Declared in the registry, never a connectivity claim. */
   permission: "granted" | "blocked";
+  /** Public member identifier. Lets a rehearsal name the author without a token. */
+  member_urn: string;
   note: string;
   /** Derived by the server from token presence. */
   connected: boolean;
