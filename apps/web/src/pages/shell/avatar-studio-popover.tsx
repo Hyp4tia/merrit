@@ -67,7 +67,7 @@ export function BotLookPicker({
             <Trans>Original</Trans>
           </TabsTrigger>
           <TabsTrigger value="rakazo" className="flex-1">
-            <Trans>Rakazo</Trans>
+            <Trans>Merrit</Trans>
           </TabsTrigger>
         </TabsList>
       </Tabs>

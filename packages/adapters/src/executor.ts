@@ -1779,7 +1779,7 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
           redactSecrets(text, runSecrets),
         );
         // An outage at the computer provider is retried like any setup failure, but is not a
-        // Rakazo bug to report.
+        // Merrit bug to report.
         const providerOutage =
           setupError instanceof SandboxUnavailableError ||
           setupError instanceof SandboxUnresponsiveError;

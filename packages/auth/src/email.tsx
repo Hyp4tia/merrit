@@ -147,14 +147,14 @@ export function verificationEmail(
   return message(
     email,
     locale,
-    say("Verify your Rakazo email"),
+    say("Verify your Merrit email"),
     <>
       <Text>
         <Link href={url} style={linkStyle}>
           {say("Verify email")}
         </Link>
       </Text>
-      <Text>{say("Then return to Rakazo to sign in.")}</Text>
+      <Text>{say("Then return to Merrit to sign in.")}</Text>
       <Text>
         {say("This link expires in one hour. If you did not register, ignore this email.")}
       </Text>
@@ -171,9 +171,9 @@ export function signInCodeEmail(
   return message(
     email,
     locale,
-    say("Your Rakazo sign-in code"),
+    say("Your Merrit sign-in code"),
     <>
-      <Text>{say("Enter this code to sign in to Rakazo:")}</Text>
+      <Text>{say("Enter this code to sign in to Merrit:")}</Text>
       <Text>
         <strong>{code}</strong>
       </Text>
@@ -193,10 +193,10 @@ export function passwordResetEmail(
   return message(
     user.email,
     locale,
-    say("Reset your Rakazo password"),
+    say("Reset your Merrit password"),
     <>
       <Text>{greeting(say, user.name)}</Text>
-      <Text>{say("Reset your Rakazo password:")}</Text>
+      <Text>{say("Reset your Merrit password:")}</Text>
       <Text>
         <Link href={resetUrl} style={linkStyle}>
           {say("Reset password")}
@@ -220,9 +220,9 @@ export function accountDeletionEmail(
   return message(
     email,
     locale,
-    say("Confirm Rakazo account deletion"),
+    say("Confirm Merrit account deletion"),
     <>
-      <Text>{say("Enter this code in Rakazo to delete your account:")}</Text>
+      <Text>{say("Enter this code in Merrit to delete your account:")}</Text>
       <Text>{code}</Text>
       <Text>
         {say(
@@ -242,9 +242,9 @@ export function identityCodeEmail(
   return message(
     email,
     locale,
-    say("Your Rakazo confirmation code"),
+    say("Your Merrit confirmation code"),
     <>
-      <Text>{say("Enter this code in Rakazo to confirm it's you:")}</Text>
+      <Text>{say("Enter this code in Merrit to confirm it's you:")}</Text>
       <Text>
         <strong>{code}</strong>
       </Text>

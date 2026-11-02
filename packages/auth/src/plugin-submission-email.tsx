@@ -12,9 +12,9 @@ export function pluginSubmissionReceivedEmail(
   return message(
     email,
     locale,
-    say("We received your Rakazo plugin"),
+    say("We received your Merrit plugin"),
     <>
-      <Text>{say("Thanks for submitting a plugin to the Rakazo marketplace.")}</Text>
+      <Text>{say("Thanks for submitting a plugin to the Merrit marketplace.")}</Text>
       <Text>{say("We review every submission and will email you when it's done.")}</Text>
       <Text>{say("If you did not submit a plugin, ignore this email.")}</Text>
     </>,
@@ -60,13 +60,13 @@ export function pluginSubmissionReviewedEmail(
     submission.email,
     locale,
     approved
-      ? say("{name} is in the Rakazo marketplace", { name })
-      : say("Your Rakazo plugin submission: {name}", { name }),
+      ? say("{name} is in the Merrit marketplace", { name })
+      : say("Your Merrit plugin submission: {name}", { name }),
     <>
       <Text>
         {approved
-          ? say("{name} is now listed in the Rakazo plugin marketplace.", { name })
-          : say("We couldn't list {name} in the Rakazo plugin marketplace.", { name })}
+          ? say("{name} is now listed in the Merrit plugin marketplace.", { name })
+          : say("We couldn't list {name} in the Merrit plugin marketplace.", { name })}
       </Text>
       {submission.reason ? <Text>{submission.reason}</Text> : null}
       <Text>{say("Have any questions? Reply to this email.")}</Text>

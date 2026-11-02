@@ -1,0 +1,20 @@
+Merrit
+Copyright 2026 Zeyad Hussein
+
+This product is a derivative work of Rakazo (https://github.com/elie222/rakazo),
+licensed under the Apache License, Version 2.0. The upstream copyright and license
+notices are retained in LICENSE and in the headers of unmodified upstream files.
+
+Modifications made for Merrit are in apps/operator (original work, no upstream code),
+the brand copy rename scripted in scripts/rebrand-to-merrit.mjs, and documentation.
+
+Upstream shell vendored at fork time: rakazo commit on main, forked 2026-11-02.
+
+Third-party components referenced by the upstream project and not modified here keep
+their own licenses. See the per-package LICENSE files and pnpm-lock.yaml.
+
+Not included in this build:
+- Postiz (AGPL-3.0) is not vendored or modified. It is planned as an external service
+  driven over its public API in a later milestone; no AGPL code is linked into Merrit.
+- OpenDots (MIT) is not used.
+- No code from OpenBot (PolyForm Noncommercial) is present in this repository.
