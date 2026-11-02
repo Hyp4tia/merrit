@@ -1,16 +1,12 @@
-import { loadBrand, type Language } from "./brand.ts";
+import type { Language } from "./brand.ts";
+import { loadBrand } from "./brand.ts";
 import { config } from "./config.ts";
-import {
-  addEvent,
-  getItem,
-  insertItem,
-  listItems,
-  setStatus,
-  type ApprovalItem,
-  type ItemStatus,
-} from "./db.ts";
-import { DEFAULT_ANGLES, PROMPT_VERSION, generateDraft, type Angle } from "./generate.ts";
-import { buildKit, type Kit } from "./kit.ts";
+import type { ApprovalItem, ItemStatus } from "./db.ts";
+import { addEvent, getItem, insertItem, listItems, setStatus } from "./db.ts";
+import type { Angle } from "./generate.ts";
+import { BrandReviewRequired, DEFAULT_ANGLES, generateDraft, PROMPT_VERSION } from "./generate.ts";
+import type { Kit } from "./kit.ts";
+import { buildKit } from "./kit.ts";
 import { LinkedInError, publishPost } from "./publish-linkedin.ts";
 
 export function brand() {
@@ -19,13 +15,19 @@ export function brand() {
 
 export interface BatchResult {
   created: ApprovalItem[];
+  /** Drafts that invented commercial terms twice: queued, but flagged for a human to judge. */
+  flagged: ApprovalItem[];
   failures: Array<{ angle: string; error: string }>;
 }
 
-export async function generateBatch(count: number, angles: Angle[] = DEFAULT_ANGLES): Promise<BatchResult> {
+export async function generateBatch(
+  count: number,
+  angles: Angle[] = DEFAULT_ANGLES,
+): Promise<BatchResult> {
   const brandFile = brand();
   const wanted = angles.slice(0, count);
   const created: ApprovalItem[] = [];
+  const flagged: ApprovalItem[] = [];
   const failures: BatchResult["failures"] = [];
 
   // Sequential on purpose: one failure should not lose the whole batch, and a retry storm
@@ -46,17 +48,39 @@ export async function generateBatch(count: number, angles: Angle[] = DEFAULT_ANG
       });
       created.push(item);
     } catch (error) {
-      failures.push({ angle: angle.key, error: error instanceof Error ? error.message : String(error) });
+      // A commercial-terms violation that survived one regeneration is not garbage: queue it
+      // flagged, so the owner sees the exact claim instead of a silent gap in the batch.
+      if (error instanceof BrandReviewRequired) {
+        const item = await insertItem({
+          client: brandFile.slug,
+          language: error.draft.language,
+          angle: error.draft.angleSummary,
+          body: error.draft.body,
+          model: error.draft.model,
+          promptVersion: PROMPT_VERSION,
+          attempts: error.draft.attempts,
+          promptTokens: error.draft.promptTokens,
+          completionTokens: error.draft.completionTokens,
+          reviewReason: error.message,
+        });
+        flagged.push(item);
+        continue;
+      }
+      failures.push({
+        angle: angle.key,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
-  return { created, failures };
+  return { created, flagged, failures };
 }
 
 export async function approve(id: string): Promise<ApprovalItem> {
   const item = await getItem(id);
   if (!item) throw new Error(`No item ${id}`);
-  if (item.status !== "pending") throw new Error(`Item is ${item.status}, only a pending draft can be approved`);
+  if (item.status !== "pending")
+    throw new Error(`Item is ${item.status}, only a pending draft can be approved`);
   const updated = await setStatus(id, "approved");
   if (!updated) throw new Error(`No item ${id}`);
   return updated;
@@ -65,7 +89,8 @@ export async function approve(id: string): Promise<ApprovalItem> {
 export async function schedule(id: string, when: Date): Promise<ApprovalItem> {
   const item = await getItem(id);
   if (!item) throw new Error(`No item ${id}`);
-  if (!["pending", "approved"].includes(item.status)) throw new Error(`Item is ${item.status}, cannot schedule`);
+  if (!["pending", "approved"].includes(item.status))
+    throw new Error(`Item is ${item.status}, cannot schedule`);
   const updated = await setStatus(id, "scheduled", { scheduled_for: when });
   if (!updated) throw new Error(`No item ${id}`);
   return updated;
@@ -96,7 +121,10 @@ export async function rejectAndRegenerate(id: string, reason: string): Promise<R
   };
 
   try {
-    const draft = await generateDraft(brandFile, angle, { rejectReason: trimmed, previousBody: item.body });
+    const draft = await generateDraft(brandFile, angle, {
+      rejectReason: trimmed,
+      previousBody: item.body,
+    });
     const replacement = await insertItem({
       client: brandFile.slug,
       language: draft.language,
@@ -111,7 +139,27 @@ export async function rejectAndRegenerate(id: string, reason: string): Promise<R
     await addEvent(replacement.id, "regenerated-from", id);
     return { rejected, replacement, error: null };
   } catch (error) {
-    return { rejected, replacement: null, error: error instanceof Error ? error.message : String(error) };
+    if (error instanceof BrandReviewRequired) {
+      const item = await insertItem({
+        client: brandFile.slug,
+        language: error.draft.language,
+        angle: error.draft.angleSummary,
+        body: error.draft.body,
+        model: error.draft.model,
+        promptVersion: PROMPT_VERSION,
+        attempts: error.draft.attempts,
+        promptTokens: error.draft.promptTokens,
+        completionTokens: error.draft.completionTokens,
+        reviewReason: error.message,
+      });
+      await addEvent(item.id, "regenerated-from", id);
+      return { rejected, replacement: item, error: null };
+    }
+    return {
+      rejected,
+      replacement: null,
+      error: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 
@@ -156,7 +204,10 @@ export async function publishApproved(id: string): Promise<PublishResult> {
 export async function markPublishedManually(id: string, url: string): Promise<ApprovalItem> {
   const item = await getItem(id);
   if (!item) throw new Error(`No item ${id}`);
-  const updated = await setStatus(id, "published", { published_url: url, published_at: new Date() });
+  const updated = await setStatus(id, "published", {
+    published_url: url,
+    published_at: new Date(),
+  });
   await addEvent(id, "published-manually", url);
   if (!updated) throw new Error(`No item ${id}`);
   return updated;
@@ -170,4 +221,4 @@ export async function buildKitFor(id: string): Promise<Kit> {
   return kit;
 }
 
-export { listItems, getItem, type ApprovalItem, type ItemStatus, LinkedInError };
+export { type ApprovalItem, getItem, type ItemStatus, LinkedInError, listItems };

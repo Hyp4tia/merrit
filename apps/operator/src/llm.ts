@@ -18,7 +18,10 @@ interface CompletionResponse {
   error?: { message?: string };
 }
 
-export async function chat(messages: ChatMessage[], maxTokens = config.llm.maxTokens): Promise<LlmResult> {
+export async function chat(
+  messages: ChatMessage[],
+  maxTokens = config.llm.maxTokens,
+): Promise<LlmResult> {
   const result = await chatOnce(messages, maxTokens);
   return result;
 }
@@ -48,7 +51,9 @@ async function chatOnce(messages: ChatMessage[], maxTokens: number): Promise<Llm
   // larger budget once instead of failing the draft.
   if (choice?.finish_reason === "length") {
     if (maxTokens < 8000) return chatOnce(messages, Math.min(maxTokens * 2, 8000));
-    throw new Error(`LLM hit max_tokens (${maxTokens}) before finishing the reply. Raise MERRIT_LLM_MAX_TOKENS.`);
+    throw new Error(
+      `LLM hit max_tokens (${maxTokens}) before finishing the reply. Raise MERRIT_LLM_MAX_TOKENS.`,
+    );
   }
   const text = choice?.message?.content?.trim();
   if (!text) throw new Error("LLM returned an empty completion");
@@ -65,14 +70,18 @@ async function chatOnce(messages: ChatMessage[], maxTokens: number): Promise<Llm
 // but it must fail loudly rather than fall back to prose as the post body.
 export function parseJsonReply<T>(text: string): T {
   const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(text);
-  const candidate = (fenced ? fenced[1] : text).trim();
+  const candidate = (fenced?.[1] ?? text).trim();
   const start = candidate.indexOf("{");
   const end = candidate.lastIndexOf("}");
-  if (start === -1 || end === -1) throw new Error(`No JSON object in model reply: ${text.slice(0, 200)}`);
+  if (start === -1 || end === -1)
+    throw new Error(`No JSON object in model reply: ${text.slice(0, 200)}`);
   return JSON.parse(candidate.slice(start, end + 1)) as T;
 }
 
-export async function chatJson<T>(messages: ChatMessage[], maxTokens = config.llm.maxTokens): Promise<{ value: T; result: LlmResult }> {
+export async function chatJson<T>(
+  messages: ChatMessage[],
+  maxTokens = config.llm.maxTokens,
+): Promise<{ value: T; result: LlmResult }> {
   const result = await chat(messages, maxTokens);
   return { value: parseJsonReply<T>(result.text), result };
 }

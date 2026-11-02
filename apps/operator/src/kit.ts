@@ -30,7 +30,18 @@ export function buildKit(item: ApprovalItem, dirOverride?: string): Kit {
     ["post.txt", `${rtl}${body}\n`],
     [
       "post.md",
-      [`# ${label} post`, "", `Language: ${item.language === "ar" ? "Arabic (MSA, RTL)" : "English"}`, "", "---", "", body, "", "---", ""].join("\n"),
+      [
+        `# ${label} post`,
+        "",
+        `Language: ${item.language === "ar" ? "Arabic (MSA, RTL)" : "English"}`,
+        "",
+        "---",
+        "",
+        body,
+        "",
+        "---",
+        "",
+      ].join("\n"),
     ],
     [
       "README.txt",
@@ -44,7 +55,9 @@ export function buildKit(item: ApprovalItem, dirOverride?: string): Kit {
         "How to publish by hand:",
         `1. Open ${label}.`,
         "2. Paste post.txt exactly as it is. Do not reflow the line breaks.",
-        item.language === "ar" ? "3. Confirm the text renders right to left before posting." : "3. Confirm the first two lines read well in the preview.",
+        item.language === "ar"
+          ? "3. Confirm the text renders right to left before posting."
+          : "3. Confirm the first two lines read well in the preview.",
         "",
         "Override the published URL once posted:",
         `  pnpm exec tsx apps/operator/src/cli.ts published ${item.id} --url <url>`,

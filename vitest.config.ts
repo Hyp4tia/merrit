@@ -5,6 +5,7 @@ import { defineConfig } from "vitest/config";
 
 const include = [
   ".agents/skills/pr-watch/*.test.ts",
+  "apps/operator/src/**/*.test.ts",
   "packages/*/src/**/*.test.{ts,tsx}",
   "infra/sandboxes/supervisor/src/**/*.test.ts",
   "infra/updater/src/**/*.test.ts",

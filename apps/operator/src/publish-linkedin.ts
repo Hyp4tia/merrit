@@ -46,7 +46,9 @@ export async function exchangeCode(code: string): Promise<{ personUrn: string; s
 
   const payload = (await response.json()) as TokenResponse;
   if (!response.ok || !payload.access_token) {
-    throw new Error(`LinkedIn token exchange failed (${response.status}): ${payload.error_description ?? payload.error ?? "unknown"}`);
+    throw new Error(
+      `LinkedIn token exchange failed (${response.status}): ${payload.error_description ?? payload.error ?? "unknown"}`,
+    );
   }
 
   const userinfo = await fetch(USERINFO_URL, {
@@ -82,8 +84,14 @@ export class LinkedInError extends Error {
 // Official Posts API only. No browser automation, no unofficial endpoints.
 export async function publishPost(commentary: string): Promise<{ url: string; postUrn: string }> {
   const token = await getLinkedInToken();
-  if (!token) throw new LinkedInError("No LinkedIn token. Authorize first at /oauth/linkedin/start.", 0, false);
-  if (!token.person_urn) throw new LinkedInError("Stored LinkedIn token has no person urn. Re-authorize.", 0, false);
+  if (!token)
+    throw new LinkedInError(
+      "No LinkedIn token. Authorize first at /oauth/linkedin/start.",
+      0,
+      false,
+    );
+  if (!token.person_urn)
+    throw new LinkedInError("Stored LinkedIn token has no person urn. Re-authorize.", 0, false);
   if (token.expires_at && token.expires_at.getTime() < Date.now()) {
     throw new LinkedInError("Stored LinkedIn token has expired. Re-authorize.", 401, false);
   }
@@ -115,13 +123,19 @@ export async function publishPost(commentary: string): Promise<{ url: string; po
   if (!response.ok) {
     const detail = await response.text();
     const scopeProblem = /scope|NotEnoughScopes|ACCESS_DENIED|permission/i.test(detail);
-    throw new LinkedInError(`LinkedIn publish failed (${response.status}): ${detail.slice(0, 500)}`, response.status, scopeProblem);
+    throw new LinkedInError(
+      `LinkedIn publish failed (${response.status}): ${detail.slice(0, 500)}`,
+      response.status,
+      scopeProblem,
+    );
   }
 
   // The Posts API returns the created urn in a response header, and no body.
   const postUrn = response.headers.get("x-restli-id") ?? "";
   const numeric = postUrn.split(":").pop() ?? "";
-  const url = numeric ? `https://www.linkedin.com/feed/update/${postUrn}/` : "https://www.linkedin.com/feed/recent-activity/all/";
+  const url = numeric
+    ? `https://www.linkedin.com/feed/update/${postUrn}/`
+    : "https://www.linkedin.com/feed/recent-activity/all/";
 
   return { url, postUrn };
 }

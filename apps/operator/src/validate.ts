@@ -20,15 +20,22 @@ export function validatePost(body: string, brand: Brand, language: Language): Vi
   // Em and en dashes: the owner's rule covers all user-facing copy.
   for (const dash of ["\u2014", "\u2013"]) {
     if (text.includes(dash)) {
-      violations.push({ rule: "dashes", detail: `contains the character ${JSON.stringify(dash)}; use a full stop or comma` });
+      violations.push({
+        rule: "dashes",
+        detail: `contains the character ${JSON.stringify(dash)}; use a full stop or comma`,
+      });
     }
   }
 
-  if (text.includes("!")) violations.push({ rule: "punctuation", detail: "exclamation mark in body copy" });
+  if (text.includes("!"))
+    violations.push({ rule: "punctuation", detail: "exclamation mark in body copy" });
   if (EMOJI.test(text)) violations.push({ rule: "punctuation", detail: "emoji in body copy" });
 
   for (const phrase of brand.banned) {
-    const needle = phrase.toLowerCase().replace(/\s*\(.*?\)\s*/g, "").trim();
+    const needle = phrase
+      .toLowerCase()
+      .replace(/\s*\(.*?\)\s*/g, "")
+      .trim();
     if (needle.length < 4) continue;
     if (lower.includes(needle)) {
       violations.push({ rule: "banned", detail: `banned phrase: "${phrase}"` });
@@ -40,8 +47,10 @@ export function validatePost(body: string, brand: Brand, language: Language): Vi
   }
 
   const chars = [...text].length;
-  if (chars < 400) violations.push({ rule: "length", detail: `${chars} characters, under the 400 minimum` });
-  if (chars > 2800) violations.push({ rule: "length", detail: `${chars} characters, over LinkedIn's 3000 limit` });
+  if (chars < 400)
+    violations.push({ rule: "length", detail: `${chars} characters, under the 400 minimum` });
+  if (chars > 2800)
+    violations.push({ rule: "length", detail: `${chars} characters, over LinkedIn's 3000 limit` });
 
   if (language === "ar" && !ARABIC.test(text)) {
     violations.push({ rule: "language", detail: "Arabic draft contains no Arabic characters" });
@@ -58,7 +67,8 @@ export function validatePost(body: string, brand: Brand, language: Language): Vi
     }
   }
   for (const phrase of ["trusted by", "our clients love", "clients rave"]) {
-    if (lower.includes(phrase)) violations.push({ rule: "proof", detail: `unqualified social proof: "${phrase}"` });
+    if (lower.includes(phrase))
+      violations.push({ rule: "proof", detail: `unqualified social proof: "${phrase}"` });
   }
 
   return violations;

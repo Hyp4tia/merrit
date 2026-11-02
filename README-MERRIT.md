@@ -149,6 +149,44 @@ thrown away and regenerated, up to three attempts, when it contains:
 A draft that still fails after three attempts is reported as a failure and never inserted. There
 is no path where a brand-violating draft silently lands in the queue.
 
+## Commercial terms are guarded, not trusted
+
+`apps/operator/src/commercial.ts` is the backstop behind the prompt. The brand rules above catch
+tone. This catches invention, which is a different bug: a draft once manufactured a "paid scoping
+week" and a "milestone linked balance" while quoting no numbers at all, so a price list check
+alone would have missed it.
+
+On every draft the guard extracts:
+
+- every currency amount, and diffs it against the figures in the brand file offers block
+- every percentage
+- every duration, because an unpublished commitment ("answer within 24 hours") is still a claim
+- every commercial structure word: scoping week, audit, hourly, fixed scope, milestone, package,
+  tier, pricing plan, discount, free trial, setup or onboarding fee, rush fee, minimum contract,
+  plus the Arabic equivalents
+
+Context decides the category, so a bare count such as "found 3 broken forms" is not a commercial
+claim and passes. Anything that does not trace back to the offers block becomes a violation with a
+named reason: `commercial-amount`, `commercial-percentage`, `commercial-duration` or
+`commercial-structure`.
+
+Flow: draft, brand rules, commercial guard, one regeneration told exactly what it invented, then
+the item is still queued but with `review_reason` set and a visible flag in the UI. A human
+decides. Invented terms cannot reach a published post without someone overriding a flag they can
+see.
+
+## Tests
+
+```bash
+pnpm vitest run apps/operator
+```
+
+30 tests covering the incident copy verbatim (paid scoping week, fixed price for fixed scope,
+milestone balance, hourly rate, package tier), invented amount, percentage and duration, the real
+pricing post passing unchanged, Arabic digits, the regenerate-once-then-flag flow, and the em dash,
+exclamation mark and emoji rules that must not regress. The generation tests replace only the
+model call, so the brand rules and the guard run for real.
+
 ---
 
 ## Publishing to LinkedIn

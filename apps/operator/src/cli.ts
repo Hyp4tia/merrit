@@ -1,4 +1,4 @@
-import { DEFAULT_ANGLES } from "./generate.ts";
+import type { ItemStatus } from "./actions.ts";
 import {
   approve,
   brand,
@@ -10,10 +10,10 @@ import {
   publishApproved,
   rejectAndRegenerate,
   schedule,
-  type ItemStatus,
 } from "./actions.ts";
 import { config } from "./config.ts";
 import { initSchema, pool } from "./db.ts";
+import { DEFAULT_ANGLES } from "./generate.ts";
 
 const [command, ...rest] = process.argv.slice(2);
 
@@ -55,19 +55,30 @@ try {
       const count = Number(flag("count") ?? 7);
       const only = flag("angle");
       const angles = only ? DEFAULT_ANGLES.filter((angle) => angle.key === only) : DEFAULT_ANGLES;
-      if (only && angles.length === 0) throw new Error(`No angle named ${only}. Known: ${DEFAULT_ANGLES.map((a) => a.key).join(", ")}`);
+      if (only && angles.length === 0)
+        throw new Error(
+          `No angle named ${only}. Known: ${DEFAULT_ANGLES.map((a) => a.key).join(", ")}`,
+        );
       const brandFile = brand();
       console.log(`[merrit] ${brandFile.name}: drafting ${count} posts with ${config.llm.model}`);
-      const { created, failures } = await generateBatch(count, angles);
+      const { created, flagged, failures } = await generateBatch(count, angles);
       for (const item of created) {
         console.log(`  + ${item.id.slice(0, 8)}  ${item.language}  ${item.angle}`);
         console.log(`    ${shortBody(item.body)}`);
       }
+      for (const item of flagged) {
+        console.log(`  ~ ${item.id.slice(0, 8)}  ${item.language}  flagged for review`);
+        console.log(`    ${shortBody(item.review_reason ?? "", 200)}`);
+      }
       for (const failure of failures) console.log(`  ! ${failure.angle}: ${failure.error}`);
-      const promptTokens = created.reduce((total, item) => total + (item.prompt_tokens ?? 0), 0);
-      const completionTokens = created.reduce((total, item) => total + (item.completion_tokens ?? 0), 0);
+      const counted = [...created, ...flagged];
+      const promptTokens = counted.reduce((total, item) => total + (item.prompt_tokens ?? 0), 0);
+      const completionTokens = counted.reduce(
+        (total, item) => total + (item.completion_tokens ?? 0),
+        0,
+      );
       console.log(
-        `[merrit] created ${created.length}, failed ${failures.length}, tokens ${promptTokens} in / ${completionTokens} out`,
+        `[merrit] created ${created.length}, flagged ${flagged.length}, failed ${failures.length}, tokens ${promptTokens} in / ${completionTokens} out`,
       );
       break;
     }
@@ -75,7 +86,9 @@ try {
       const status = flag("status") as ItemStatus | undefined;
       const items = await listItems(status);
       for (const item of items) {
-        console.log(`${item.id.slice(0, 8)}  ${item.status.padEnd(9)} ${item.language}  ${item.angle}`);
+        console.log(
+          `${item.id.slice(0, 8)}  ${item.status.padEnd(9)} ${item.language}  ${item.angle}`,
+        );
         console.log(`          ${shortBody(item.body, 160)}`);
         if (item.published_url) console.log(`          ${item.published_url}`);
       }
@@ -85,7 +98,10 @@ try {
     case "show": {
       const id = positional(0);
       if (!id) throw new Error("show needs an id");
-      const item = await getItem(id) ?? (await listItems()).find((candidate) => candidate.id.startsWith(id)) ?? null;
+      const item =
+        (await getItem(id)) ??
+        (await listItems()).find((candidate) => candidate.id.startsWith(id)) ??
+        null;
       if (!item) throw new Error(`No item ${id}`);
       console.log(`${item.id}  ${item.status}  ${item.language}\n`);
       console.log(item.body);
@@ -103,7 +119,11 @@ try {
       if (!id || !reason) throw new Error('reject needs an id and --reason "..."');
       const result = await rejectAndRegenerate(id, reason);
       console.log(`rejected ${result.rejected.id}`);
-      console.log(result.replacement ? `replacement ${result.replacement.id}` : `redraft failed: ${result.error}`);
+      console.log(
+        result.replacement
+          ? `replacement ${result.replacement.id}`
+          : `redraft failed: ${result.error}`,
+      );
       break;
     }
     case "publish": {

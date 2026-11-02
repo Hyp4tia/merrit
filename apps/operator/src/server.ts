@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFileSync } from "node:fs";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { createServer } from "node:http";
+import type { ApprovalItem } from "./actions.ts";
 import {
   approve,
   buildKitFor,
@@ -10,7 +12,6 @@ import {
   publishApproved,
   rejectAndRegenerate,
   schedule,
-  type ApprovalItem,
 } from "./actions.ts";
 import { config } from "./config.ts";
 import { initSchema } from "./db.ts";
@@ -20,7 +21,11 @@ const STATUS_ORDER = ["pending", "approved", "scheduled", "manual", "published",
 const oauthStates = new Set<string>();
 
 function escapeHtml(value: string): string {
-  return value.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char] ?? char);
+  return value.replace(
+    /[&<>"']/g,
+    (char) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char] ?? char,
+  );
 }
 
 function json(res: ServerResponse, status: number, payload: unknown): void {
@@ -43,7 +48,10 @@ async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> 
 function card(item: ApprovalItem): string {
   const badge = `<span class="badge ${item.status}">${item.status}</span>`;
   const lang = `<span class="badge lang">${item.language === "ar" ? "AR" : "EN"}</span>`;
-  const when = new Date(item.created_at).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" });
+  const when = new Date(item.created_at).toLocaleString("en-GB", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
   const dir = item.language === "ar" ? "rtl" : "ltr";
 
   const actions: string[] = [];
@@ -60,7 +68,12 @@ function card(item: ApprovalItem): string {
     ? `<p class="meta"><a href="${escapeHtml(item.published_url)}" target="_blank" rel="noreferrer">${escapeHtml(item.published_url)}</a></p>`
     : "";
   const kitPath = item.kit_path ? `<p class="meta mono">kit: ${escapeHtml(item.kit_path)}</p>` : "";
-  const reason = item.reject_reason ? `<p class="meta reason">rejected: ${escapeHtml(item.reject_reason)}</p>` : "";
+  const reason = item.reject_reason
+    ? `<p class="meta reason">rejected: ${escapeHtml(item.reject_reason)}</p>`
+    : "";
+  const review = item.review_reason
+    ? `<p class="meta review">flagged for review: ${escapeHtml(item.review_reason)}</p>`
+    : "";
 
   return `<article class="card" data-status="${item.status}">
   <header>
@@ -68,7 +81,7 @@ function card(item: ApprovalItem): string {
     <span class="meta">${escapeHtml(item.angle)}</span>
   </header>
   <div class="body" dir="${dir}">${escapeHtml(item.body)}</div>
-  ${reason}${published}${kitPath}
+  ${review}${reason}${published}${kitPath}
   <footer class="row">
     <span class="meta">${when} · ${escapeHtml(item.model ?? "no model")} · attempt ${item.attempts} · <span class="mono">${item.id.slice(0, 8)}</span></span>
     <span class="actions">${actions.join("")}</span>
@@ -116,6 +129,7 @@ function page(items: ApprovalItem[]): string {
   .body[dir="rtl"] { font-family:"Noto Sans Arabic", "Geeza Pro", serif; font-size:16px; }
   .meta { color:var(--muted); font-size:12.5px; margin:6px 0 0; }
   .meta.reason { color:#8a2b2b; }
+  .meta.review { color:#6b2b00; background:#ffe9d6; border:1px solid #f0c9a8; padding:8px 10px; border-radius:8px; }
   .mono { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; }
   .row { display:flex; justify-content:space-between; gap:14px; align-items:center; flex-wrap:wrap; margin-top:14px;
     border-top:1px solid #eef1f5; padding-top:12px; }
@@ -170,7 +184,11 @@ function page(items: ApprovalItem[]): string {
       if (action === 'generate') {
         toast('Generating drafts. This calls the model once per angle.');
         const result = await post('/api/generate', { count: Number(button.dataset.count || 7) });
-        toast(result.ok ? 'Created ' + result.created + ' drafts' + (result.failures.length ? ', ' + result.failures.length + ' failed' : '') : 'Generation failed: ' + result.error);
+        toast(result.ok
+          ? 'Created ' + result.created + ' drafts'
+            + (result.flagged ? ', ' + result.flagged + ' flagged for review' : '')
+            + (result.failures.length ? ', ' + result.failures.length + ' failed' : '')
+          : 'Generation failed: ' + result.error);
         if (result.ok) setTimeout(() => location.reload(), 1400);
         return;
       }
@@ -233,13 +251,23 @@ const server = createServer(async (req, res) => {
       const count = Math.min(Number(body.count ?? 7), 14);
       const { generateBatch } = await import("./actions.ts");
       const result = await generateBatch(count);
-      json(res, 200, { ok: true, created: result.created.length, failures: result.failures });
+      json(res, 200, {
+        ok: true,
+        created: result.created.length,
+        flagged: result.flagged.length,
+        failures: result.failures,
+      });
       return;
     }
 
-    const itemRoute = /^\/api\/items\/([0-9a-f-]{36})\/(approve|reject|publish|kit|schedule|published)$/.exec(url.pathname);
+    const itemRoute =
+      /^\/api\/items\/([0-9a-f-]{36})\/(approve|reject|publish|kit|schedule|published)$/.exec(
+        url.pathname,
+      );
     if (req.method === "POST" && itemRoute) {
-      const [, id, action] = itemRoute;
+      const id = itemRoute[1];
+      const action = itemRoute[2];
+      if (!id || !action) throw new Error(`Malformed item route: ${url.pathname}`);
       const body = await readJson(req);
       if (action === "approve") {
         json(res, 200, { ok: true, item: await approve(id) });
@@ -247,7 +275,12 @@ const server = createServer(async (req, res) => {
       }
       if (action === "reject") {
         const result = await rejectAndRegenerate(id, String(body.reason ?? ""));
-        json(res, 200, { ok: true, replacement: Boolean(result.replacement), error: result.error, item: result.rejected });
+        json(res, 200, {
+          ok: true,
+          replacement: Boolean(result.replacement),
+          error: result.error,
+          item: result.rejected,
+        });
         return;
       }
       if (action === "publish") {
@@ -273,7 +306,8 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && url.pathname === "/oauth/linkedin/start") {
-      if (!isConfigured()) throw new Error("LINKEDIN_CLIENT_ID and LINKEDIN_CLIENT_SECRET are not set in .env");
+      if (!isConfigured())
+        throw new Error("LINKEDIN_CLIENT_ID and LINKEDIN_CLIENT_SECRET are not set in .env");
       const state = randomUUID();
       oauthStates.add(state);
       res.writeHead(302, { location: authorizeUrl(state) });
@@ -290,7 +324,9 @@ const server = createServer(async (req, res) => {
       if (!code) throw new Error("No authorization code");
       const { personUrn } = await exchangeCode(code);
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(`<!doctype html><meta charset="utf-8"><title>Merrit</title><body style="font:15px system-ui;padding:40px"><h1>LinkedIn connected</h1><p>Authorized as <code>${escapeHtml(personUrn)}</code>. You can close this tab.</p><p><a href="/">Back to the queue</a></p></body>`);
+      res.end(
+        `<!doctype html><meta charset="utf-8"><title>Merrit</title><body style="font:15px system-ui;padding:40px"><h1>LinkedIn connected</h1><p>Authorized as <code>${escapeHtml(personUrn)}</code>. You can close this tab.</p><p><a href="/">Back to the queue</a></p></body>`,
+      );
       return;
     }
 

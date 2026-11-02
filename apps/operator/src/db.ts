@@ -15,11 +15,15 @@ export interface ApprovalItem {
   model: string | null;
   prompt_version: string | null;
   attempts: number;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
   scheduled_for: Date | null;
   published_url: string | null;
   platform_post_id: string | null;
   published_at: Date | null;
   kit_path: string | null;
+  /** Set when the commercial guard still failed after one regeneration, so a human must look. */
+  review_reason: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -49,6 +53,7 @@ export async function initSchema(): Promise<void> {
       platform_post_id text,
       published_at timestamptz,
       kit_path text,
+      review_reason text,
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now()
     );
@@ -56,6 +61,7 @@ export async function initSchema(): Promise<void> {
 
     ALTER TABLE merrit_approval_item ADD COLUMN IF NOT EXISTS prompt_tokens integer;
     ALTER TABLE merrit_approval_item ADD COLUMN IF NOT EXISTS completion_tokens integer;
+    ALTER TABLE merrit_approval_item ADD COLUMN IF NOT EXISTS review_reason text;
 
     CREATE TABLE IF NOT EXISTS merrit_event (
       id bigserial PRIMARY KEY,
@@ -77,7 +83,11 @@ export async function initSchema(): Promise<void> {
 }
 
 export async function addEvent(itemId: string | null, action: string, detail = ""): Promise<void> {
-  await pool.query("INSERT INTO merrit_event (item_id, action, detail) VALUES ($1,$2,$3)", [itemId, action, detail]);
+  await pool.query("INSERT INTO merrit_event (item_id, action, detail) VALUES ($1,$2,$3)", [
+    itemId,
+    action,
+    detail,
+  ]);
 }
 
 export interface NewItem {
@@ -91,13 +101,14 @@ export interface NewItem {
   promptTokens: number;
   completionTokens: number;
   channel?: string;
+  reviewReason?: string | null;
 }
 
 export async function insertItem(item: NewItem): Promise<ApprovalItem> {
   const { rows } = await pool.query<ApprovalItem>(
     `INSERT INTO merrit_approval_item
-       (client, channel, language, angle, body, model, prompt_version, attempts, prompt_tokens, completion_tokens)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+       (client, channel, language, angle, body, model, prompt_version, attempts, prompt_tokens, completion_tokens, review_reason)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
     [
       item.client,
       item.channel ?? "linkedin_personal",
@@ -109,14 +120,20 @@ export async function insertItem(item: NewItem): Promise<ApprovalItem> {
       item.attempts,
       item.promptTokens,
       item.completionTokens,
+      item.reviewReason ?? null,
     ],
   );
-  await addEvent(rows[0].id, "created", item.angle);
-  return rows[0];
+  const row = rows[0];
+  if (!row) throw new Error("Insert into merrit_approval_item returned no row");
+  await addEvent(row.id, "created", item.angle);
+  return row;
 }
 
 export async function getItem(id: string): Promise<ApprovalItem | null> {
-  const { rows } = await pool.query<ApprovalItem>("SELECT * FROM merrit_approval_item WHERE id = $1", [id]);
+  const { rows } = await pool.query<ApprovalItem>(
+    "SELECT * FROM merrit_approval_item WHERE id = $1",
+    [id],
+  );
   return rows[0] ?? null;
 }
 
@@ -133,10 +150,24 @@ export async function listItems(status?: ItemStatus): Promise<ApprovalItem[]> {
 export async function setStatus(
   id: string,
   status: ItemStatus,
-  patch: Partial<Pick<ApprovalItem, "reject_reason" | "scheduled_for" | "kit_path" | "published_url" | "published_at" | "platform_post_id">> = {},
+  patch: Partial<
+    Pick<
+      ApprovalItem,
+      | "reject_reason"
+      | "scheduled_for"
+      | "kit_path"
+      | "published_url"
+      | "published_at"
+      | "platform_post_id"
+    >
+  > = {},
 ): Promise<ApprovalItem | null> {
   const fields = Object.entries(patch).filter(([, value]) => value !== undefined);
-  const assignments = ["status = $2", "updated_at = now()", ...fields.map(([key], index) => `${key} = $${index + 3}`)];
+  const assignments = [
+    "status = $2",
+    "updated_at = now()",
+    ...fields.map(([key], index) => `${key} = $${index + 3}`),
+  ];
   const { rows } = await pool.query<ApprovalItem>(
     `UPDATE merrit_approval_item SET ${assignments.join(", ")} WHERE id = $1 RETURNING *`,
     [id, status, ...fields.map(([, value]) => value)],
@@ -152,7 +183,9 @@ export interface LinkedInToken {
   expires_at: Date | null;
 }
 
-export async function saveLinkedInToken(token: Omit<LinkedInToken, "expires_at"> & { expires_at: Date | null }): Promise<void> {
+export async function saveLinkedInToken(
+  token: Omit<LinkedInToken, "expires_at"> & { expires_at: Date | null },
+): Promise<void> {
   await pool.query(
     `INSERT INTO merrit_linkedin_token (id, access_token, scope, person_urn, expires_at, updated_at)
      VALUES (1,$1,$2,$3,$4, now())
@@ -162,6 +195,8 @@ export async function saveLinkedInToken(token: Omit<LinkedInToken, "expires_at">
 }
 
 export async function getLinkedInToken(): Promise<LinkedInToken | null> {
-  const { rows } = await pool.query<LinkedInToken>("SELECT * FROM merrit_linkedin_token WHERE id = 1");
+  const { rows } = await pool.query<LinkedInToken>(
+    "SELECT * FROM merrit_linkedin_token WHERE id = 1",
+  );
   return rows[0] ?? null;
 }
